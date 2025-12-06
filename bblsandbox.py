@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
-# Box-in-box Linux
-# This script starts customizable box-in-box Linux sandbox for running app
+# Box-in-Box Linux Sandbox
 # Licensed under GPL
 
 import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re
