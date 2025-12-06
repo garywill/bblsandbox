@@ -557,9 +557,11 @@ def run_in_forked(si, thislyr_cfg):
 
     child_procs = []
 
-    for cmd in (thislyr_cfg.dropcap_then_cmds or [] ) :
-        prc = subprocess.Popen(cmd,
-            stdin=None, stdout=sys.stdout, stderr=sys.stderr
+    for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
+        prc = subprocess.Popen(cmdItem.cmdlist ,
+            stdin =sys.stdin  if cmdItem.stdin  else subprocess.DEVNULL,
+            stdout=sys.stdout if cmdItem.stdout else subprocess.DEVNULL,
+            stderr=sys.stderr if cmdItem.stderr else subprocess.DEVNULL,
         )
         child_procs.append(prc)
 
