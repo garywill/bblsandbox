@@ -3,7 +3,7 @@
 # Box-in-Box Linux Sandbox
 # Licensed under GPL
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket
 from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +66,14 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                     d(batch_plan='mask-privacy'),
                     d(plan='empty-if-exist', dist=PTMP),
                     d(plan='tmpfs', dist='/tmp'),
+                    d(plan='tmpfs', dist='/run'),
+                    d(plan='tmpfs', dist='/run'),
+                    d(plan='tmpfs', dist='/run/user/0'),
+                    d(plan='tmpfs', dist=f'/run/user/{si.uid}'),
+                    d(plan='tmpfs', dist=f'{si.HOME}'),
+                    d(plan='robind', dist=f'{si.HOME}/.cache', src_same_dist=1),
+                    d(plan='robind', dist=f'{si.HOME}/.fonts', src_same_dist=1),
+                    d(plan='robind', dist=f'{si.HOME}/.fonts.conf', src_same_dist=1),
                     d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', src_same_dist=1),
                     d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', src_same_dist=1),
                 ],
@@ -92,6 +100,10 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                         unshare_time=True,
                         unshare_uts=True,
                         # unshare_net=True,
+
+                        start_after=[
+                            d(waittype='socket-listened', path='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
+                        ],
 
                         newrootfs=True, # 有newrootfs则必须有fs
                         fs=[ # fs全称fs_plans_for_new_rootfs 。
@@ -225,6 +237,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         cfg.envs_unset = [item for item in cfg.envs_unset if item is not None]
     if cfg.envset_grps:
         cfg.envset_grps = [item for item in cfg.envset_grps if item is not None]
+    if cfg.start_after:
+        cfg.start_after = [item for item in cfg.start_after if item is not None]
 
     if cfg.unshare_pid and not cfg.unshare_mnt:
         raise_exit(f"层{cfg.layer_name}启用了unshare_pid但没有启用unshare_mnt")
@@ -242,9 +256,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
 
     if len(cfg.dropcap_then_cmds or [])>0 and not cfg.drop_caps:
         raise_exit(f"层{cfg.layer_name}设置了dropcap_then_cmds但没有启用drop_caps")
-
-    if len(cfg.dropcap_then_cmds or [])>0 and len(cfg.sublayers or []) > 0 :
-        raise_exit(f"层{cfg.layer_name}同时设置有dropcap_then_cmds和sublayers （不能同时有）")
 
     if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
         if not any( pItem.batch_plan == 'sbxdir-in-newrootfs' for pItem in cfg.fs):
@@ -446,6 +457,11 @@ def main():
     # 变根后 1 = 即将运行下层的启动脚本时
     # 变根不一定发生，由本层配置决定，但也把两个sbxdir_path以 前 后 来称呼
 
+    for wait_task in (thislyr_cfg.start_after or [] ):
+        if wait_task.waittype == 'socket-listened':
+            while not is_unix_socket_listened(wait_task.path):
+                time.sleep(0.1)
+                pass
 
     if is_outest:
         make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=True)
@@ -1068,6 +1084,18 @@ def run_cmd_fg(cmds_list):
     prc.wait()
     if prc.returncode != 0:
         raise_exit(f"命令运行未成功（{prc.returncode}）")
+
+def is_unix_socket_listened(sock_path):
+    if not os.path.exists(sock_path):
+        return False
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(sock_path)
+        return True
+    except (FileNotFoundError, ConnectionRefusedError):
+        return False
+    finally:
+        sock.close()
 
 class FileContent:
     def __init__(self, data):
