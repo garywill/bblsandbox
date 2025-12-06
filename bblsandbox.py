@@ -911,41 +911,93 @@ def drop_caps():
     PR_GET_NO_NEW_PRIVS = 39
     PR_CAPBSET_DROP = 24
     PR_CAPBSET_READ = 23
-    # 1. 设置 no_new_privs=1
-    ret = libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
-    CHK( ret == 0, f"prctl(PR_SET_NO_NEW_PRIVS, 1) 失败, 返回值: {ret}, errno: {ctypes.get_errno()} ({os.strerror(ctypes.get_errno())})")
+    PR_CAP_AMBIENT = 47
+    PR_CAP_AMBIENT_CLEAR_ALL = 4
+    CAP_SETPCAP = 8
 
-    # 3. 清空 bounding set (drop caps 0–63)
-    for cap_id in range(64): # 0~63
-        ret = libc.prctl(PR_CAPBSET_DROP, cap_id, 0, 0, 0)
-        if ret != 0:
-             errno_val = ctypes.get_errno()
-             if errno_val not in (1, 22): # 1:EPERM(能力可能已被清除过), 22:EINVAL（内核可能没有这个能力）
-                 CHK( False, f"prctl(PR_CAPBSET_DROP, {cap_id}) 失败, 返回值: {ret}, errno: {errno_val} ({os.strerror(errno_val)})")
-
-    # 2. 清空 effective/permitted/inheritable 能力集 (capset v3)
     class CapHeader(ctypes.Structure):
         _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
-    class CapData(ctypes.Structure):
-        _fields_ = [("effective", ctypes.c_uint32), ("permitted", ctypes.c_uint32), ("inheritable", ctypes.c_uint32)]
     cap_hdr = CapHeader(version=0x20080522, pid=0)
-    cap_data = CapData(effective=0, permitted=0, inheritable=0)
-    ret = libc.capset(ctypes.byref(cap_hdr), ctypes.byref(cap_data))
-    CHK( ret == 0, f"capset() 失败, 返回值: {ret}, errno: {ctypes.get_errno()} ({os.strerror(ctypes.get_errno())})")
+
+    class CapData(ctypes.Structure):
+        _fields_ = [ ("effective", ctypes.c_uint32 * 2), ("permitted", ctypes.c_uint32 * 2), ("inheritable", ctypes.c_uint32 * 2), ]
+
+    def capset_clear(eff=False, prm=False, inh=False,  doprint=False):
+        cap_data = CapData()
+        for i in range(2):
+            cap_data.effective[i] = 0    if eff else 0xffffffff
+            cap_data.permitted[i] = 0    if prm else 0xffffffff
+            cap_data.inheritable[i] = 0  if inh else 0xffffffff
+        ret = libc.capset(ctypes.byref(cap_hdr), ctypes.byref(cap_data) )
+        errno = ctypes.get_errno() if ret != 0 else None
+        errstr = os.strerror(errno) if ret != 0 else None
+        print(f"清除能力集 {eff=} {prm=} {inh=}", (ret, errno, errstr)) if doprint else None
+        return (ret, errno, errstr)
+
+    def amb_clear(doprint=False):
+        ret = libc.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)
+        errno = ctypes.get_errno() if ret != 0 else None
+        errstr = os.strerror(errno) if ret != 0 else None
+        print('清除amb', (ret, errno, errstr)) if doprint else None
+        return (ret, errno, errstr)
+
+    def bnd_clear(maxid, doprint=False):
+        results = []
+        for cap_id in range(maxid + 1):
+            ret = libc.prctl(PR_CAPBSET_DROP, cap_id, 0, 0, 0)
+            errno = ctypes.get_errno() if ret != 0 else None
+            errstr = os.strerror(errno) if ret != 0 else None
+            results.append((ret, errno, errstr))
+        print('清除bnd', results) if doprint else None
+        return results
+
+    def set_nonewpriv(doprint=False):
+        ret = libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+        errno = ctypes.get_errno() if ret != 0 else None
+        errstr = os.strerror(errno) if ret != 0 else None
+        print('设置noNewPriv', (ret, errno, errstr)) if doprint else None
+        return (ret, errno, errstr)
+
+    BND_MAX = 40 # NOTE 是否因发行版而异？
+
+    show_clear_result = False
+    print('清除前', get_caps_dict())
+    capset_clear(eff=False , prm=True, inh=True,  doprint=show_clear_result)
+    print('清除中', get_caps_dict()) if show_clear_result else None
+    amb_clear(doprint=show_clear_result)
+    print('清除中', get_caps_dict()) if show_clear_result else None
+    set_nonewpriv(doprint=show_clear_result)
+    print('清除中', get_caps_dict()) if show_clear_result else None
+    bnd_clear(BND_MAX,  doprint=show_clear_result)
+    print('清除中', get_caps_dict()) if show_clear_result else None
+    capset_clear(eff=True, prm=True, inh=True,  doprint=show_clear_result)
+    print('清除后', get_caps_dict())
+
+    # ------验证------------
 
     # 验证 /proc/self/status 中所有能力字段为 0
     status_text = Path("/proc/self/status").read_text()
-    for cap_field in ["CapInh", "CapPrm", "CapEff", "CapBnd"]:
+    for cap_field in ["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"]:
         pattern = rf"^{cap_field}:\t0+$"
-        CHK( re.search(pattern, status_text, re.MULTILINE), f"{cap_field} 在 /proc 里显示未清除")
-    CHK( re.search(r"^NoNewPrivs:\t1$", status_text, re.MULTILINE), "NoNewPrivs != 1 in /proc")
+        CHK( re.search(pattern, status_text, re.MULTILINE), f"在/proc里显示未清除 {cap_field} ")
+    # 验证 /proc/self/status 中 NoNewPrivs
+    CHK( re.search(r"^NoNewPrivs:\t1$", status_text, re.MULTILINE), "在/proc里显示NoNewPrivs未成功设置")
 
-    # libc 验证 no_new_privs
-    CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs设置失败')
-    # libc 验证 bounding set
-    for cap_id in range(40 +1): # 内核只支持0~40
+    # libc验证 no_new_privs
+    CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs清除验证失败')
+    # libc验证 bounding set
+    for cap_id in range(BND_MAX +1): # 内核只支持0~40
         CHK( libc.prctl(PR_CAPBSET_READ, cap_id, 0, 0, 0) == 0, f'cap_id {cap_id} 降权失败')
 
+
+def get_caps_dict():
+    status_text = Path("/proc/self/status").read_text()
+    cap_fields = {}
+    for cap_field in ["CapInh", "CapPrm", "CapEff", "CapBnd",  "CapAmb", "NoNewPrivs" ]:
+        pattern = rf"^{cap_field}:\s*(\S+)"
+        match = re.search(pattern, status_text, re.MULTILINE)
+        cap_fields[cap_field] = match.group(1)
+    return cap_fields
 
 
 #============================
