@@ -556,20 +556,33 @@ def run_in_forked(si, thislyr_cfg):
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
 
+    child_procs = []
+
+    for cmd in (thislyr_cfg.dropcap_then_cmds or [] ) :
+        prc = subprocess.Popen(cmd,
+            stdin=None, stdout=sys.stdout, stderr=sys.stderr
+        )
+        child_procs.append(prc)
+
     sublayers = thislyr_cfg.sublayers or []
     print(f"{thislyr_cfg.layer_name}: 本层将生成 {len(sublayers)} 个子层")
-    if len(sublayers) >= 0 and thislyr_cfg.sbxdir_path1 is None:
-        raise_exit(f"{thislyr_cfg.layer_name}设置了要生成子层，但本层的新文件系统没有sbxdir,无法启动子层")
     for sublyr_cfg in (sublayers or []):
         print(f"{thislyr_cfg.layer_name}: 将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
-        subprocess.run([
+        prc = subprocess.Popen([
                 si.pythonbin or 'python3',
                 # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                 # 因此用本层的path1
                 f'{thislyr_cfg.sbxdir_path1}/cfg/bootsbx.py',
                 '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/cfg/lyr_cfg.{sublyr_cfg.layer_name}.json',
             ],
-        stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
+            stdin=sys.stdin,
+            stdout=sys.stdout, stderr=sys.stderr
+        )
+        child_procs.append(prc)
+
+    for proc in child_procs:
+        proc.wait()  # 阻塞直到该子进程结束
+
 
 ps1 = ">"
 def set_ps1(si, thislyr_cfg, status):
