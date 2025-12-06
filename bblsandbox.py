@@ -66,6 +66,9 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                     d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
                     d(batch_plan='mask-privacy'),
                     d(plan='empty-if-exist', dist=PTMP),
+                    d(plan='tmpfs', dist='/tmp'),
+                    d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', src_same_dist=1),
+                    d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', src_same_dist=1),
                 ],
                 sublayers = [
                     d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
@@ -76,12 +79,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                         # uid 变回 1000
                         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
 
-                        newrootfs=True,
-                        fs=[ # fs全称fs_plans_for_new_rootfs 。
-                            # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
-                            d(batch_plan='dup-rootfs'), # 从原'/'遍历一层挂进去。包括/dev。排除/proc。排除/sbxdir。不加ro。
-                            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
-                            d(plan='tmpfs', dist=f"{si.HOME}"),
+                        dropcap_then_cmds=[
                         ],
                     ),
                     # 开始第3层。可以多个子容器了。主app应该在>=4层跑，与主app通信的可以在3层跑，例如dbus-system, 或(不使用dbus proxy时的全隔离)dbus-session
@@ -103,6 +101,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                             d(plan='empty-if-exist', dist=si.startscript_on_host),
                             *dyncfg.fs_user_mounts,
                             # ---- 以上是不变条目 ----
+
                             d(plan='robind', dist='/opt', src='/opt'),
 
                             d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
