@@ -23,6 +23,7 @@ def userconfig(si): # 这个只在顶层解析一次
 
         # 若不设置gui则内部无任何X11
         gui="realX", # 使用真实的 X11
+        # gui="xephyr",
         # gui="xpra", # 暂未实现
         # gui="isolatedX", de_start_cmd="plasmashell",  # 暂未实现
 
@@ -87,6 +88,9 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
 
                         dropcap_then_cmds=[
+                            d(
+                                cmdlist=["Xephyr",  ":10",  "-resizeable",  "-ac"] ,
+                            ) if uc.gui=='xephyr' else None,
                         ],
                     ),
                     # 开始第3层。可以多个子容器了。主app应该在>=4层跑，与主app通信的可以在3层跑，例如dbus-system, 或(不使用dbus proxy时的全隔离)dbus-session
@@ -129,6 +133,9 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                             d(plan='robind', dist=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', src_same_dist=1),
                             d(plan='robind', dist='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
                             ] if uc.gui=='realX' else [] ),
+
+                            d(plan='robind', src='/tmp/.X11-unix/X10', dist='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
+
                             *([
                             d(plan='robind', dist=f'{si.HOME}/.fonts', src_same_dist=1),
                             d(plan='robind', dist=f'{si.HOME}/.fonts.conf', src_same_dist=1),
@@ -149,6 +156,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                         envset_grps=[
                             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
                             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus_session_socket') if uc.dbus_session else None,
+                            d(DISPLAY=':10') if uc.gui=='xephyr' else None,
                         ],
                         sublayers=[ #开始第4层，这里不可以只搞pid ns不搞其他 (主要是不搞 newrootfs ) ，因为想让4层与3层的一些应用通信。主要是在4层跑主app以实现以主app的退出与否决定整个沙箱退出
                             d(
