@@ -1,0 +1,1111 @@
+#!/usr/bin/python3
+
+# Box-in-box Linux
+# This script starts customizable box-in-box Linux sandbox for running app
+# Licensed under GPL
+
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re
+from types import SimpleNamespace
+from datetime import datetime
+from pathlib import Path
+from glob import glob
+
+# === HIDE_FOR_SUBLAYERS BEGIN === NOTE: Don't change this line ===
+# 普通用户设置这里
+def userconfig(si): # 这个只在顶层解析一次
+    uc = d(
+        sandbox_name='', # 沙箱名称
+        # pythonbin='python3.12', # path to python binary
+
+        # 若不设置 homedir ，则会用 tmpfs 当 $HOME
+        # homedir=f'{si.startdir_on_host}/fakehome',
+
+        mask_xdg_opens=True, # 容器内部不能使用xdg-open, firefox, chromium 等
+
+        # 若不设置gui则内部无任何X11
+        gui="realX", # 使用真实的 X11
+        # gui="xpra", # 暂未实现
+        # gui="isolatedX", de_start_cmd="plasmashell",  # 暂未实现
+
+        # see_real_hw=True, # 看见真实/dev和/sys
+
+        user_mnts = [
+            # d(mttype='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
+            # d(mttype='robind', src=f'{si.startdir_on_host}', src_same_dist=1),
+        ],
+
+        # 输入法等通信需要dbus
+        dbus_session="allow",
+        # dbus_session="filter", # (暂未实现)
+
+        # tmux_listen=True, #（暂未实现）
+    )
+    return uc
+
+def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
+    layer1 = d( # 第1层不跑任何程序，只用于PID隔离，和退出时的清理工作
+        layer_name='layer1', # 默认模板的 layer_name 不要修改
+        unshare_pid=True, # 第1层必须
+        unshare_mnt=True, # 第1层尝试有unshare mnt但不newrootfs
+
+        unshare_chdir=True, # chdir()不影响其他
+
+        # uid 变 0
+        unshare_user=True, setgroups_deny=True, uid_map=f'0 {si.uid} 1\n', gid_map=f'0 {si.gid} 1\n',
+
+        # 准备开始第2层。这第1层的 sublayers 数组应该只有一个元素，即，第2层只有一个容器
+        sublayers = [
+            d( # 第2层。 只适合跑 信任的 和要以信任身份显示在X11的： xpra client , dbus proxy . squashfs挂载
+                layer_name='layer2', # 默认模板的 layer_name 不要修改
+                unshare_pid=True, unshare_mnt=True,
+                unshare_chdir=True, # chdir()不影响其他
+                newrootfs=True, # 第2层必须 # 有newrootfs则必须有fs
+                fs=[ # fs全称fs_plans_for_new_rootfs 。
+                    # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
+                    d(batch_plan='dup-rootfs'), # 从原'/'遍历一层挂进去。包括/dev。排除/proc。排除/sbxdir。不加ro。
+                    d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+                    d(batch_plan='mask-privacy'),
+                    d(plan='empty-if-exist', dist=PTMP),
+                ],
+                sublayers = [
+                    d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
+                        layer_name='layer2a',
+                        unshare_pid=True, unshare_mnt=True,
+                        unshare_chdir=True, # chdir()不影响其他
+
+                        # uid 变回 1000
+                        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
+
+                        newrootfs=True,
+                        fs=[ # fs全称fs_plans_for_new_rootfs 。
+                            # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
+                            d(batch_plan='dup-rootfs'), # 从原'/'遍历一层挂进去。包括/dev。排除/proc。排除/sbxdir。不加ro。
+                            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+                            d(plan='tmpfs', dist=f"{si.HOME}"),
+                        ],
+                    ),
+                    # 开始第3层。可以多个子容器了。主app应该在>=4层跑，与主app通信的可以在3层跑，例如dbus-system, 或(不使用dbus proxy时的全隔离)dbus-session
+                    d(
+                        layer_name='layer3', # 默认模板的 layer_name 不要修改
+                        unshare_pid=True, unshare_mnt=True,
+                        unshare_chdir=True, # chdir()不影响其他
+                        unshare_fd=True,
+                        unshare_cg=True,
+                        unshare_ipc=True,
+                        unshare_time=True,
+                        unshare_uts=True,
+                        # unshare_net=True,
+
+                        newrootfs=True, # 有newrootfs则必须有fs
+                        fs=[ # fs全称fs_plans_for_new_rootfs 。
+                            d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
+                            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+                            d(plan='empty-if-exist', dist=si.startscript_on_host),
+                            *dyncfg.fs_user_mounts,
+                            # ---- 以上是不变条目 ----
+                            d(plan='robind', dist='/opt', src='/opt'),
+
+                            d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
+
+                            *([
+                            d(plan='robind', dist='/dev', src='/dev'),
+                            d(plan='tmpfs',dist='/dev/shm'),
+                            d(plan='robind', dist='/sys', src='/sys'),
+                            ] if uc.see_real_hw else [] ),
+
+                            d(plan='bind', dist=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
+
+                            *([
+                            d(plan='robind', dist=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', src_same_dist=1),
+                            d(plan='robind', dist='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
+                            ] if uc.gui=='realX' else [] ),
+                            *([
+                            d(plan='robind', dist=f'{si.HOME}/.fonts', src_same_dist=1),
+                            d(plan='robind', dist=f'{si.HOME}/.fonts.conf', src_same_dist=1),
+                            d(plan='robind', dist=f'{si.HOME}/.cache/fontconfig', src_same_dist=1),
+                            ] if uc.gui else [] ),
+
+                            d(plan='rofile', dist=shutil.which("xdg-open"), distmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
+                            *[d(plan='empty-if-exist', dist=path) for path in dyncfg.paths_to_mask],
+
+                            d(plan='bind', dist='/tmp/dbus_session_socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
+                        ],
+                        envs_unset=[
+                            "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK", "ICEAUTHORITY", "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS", "XDG_CACHE_HOME",
+                            "XAUTHORITY", "DISPLAY",
+                            "XAUTHLOCALHOSTNAME",
+                            "IBUS_ADDRESS", "IBUS_DAEMON_PID",
+                        ],
+                        envset_grps=[
+                            d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
+                            d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus_session_socket') if uc.dbus_session else None,
+                        ],
+                        sublayers=[ #开始第4层，这里不可以只搞pid ns不搞其他 (主要是不搞 newrootfs ) ，因为想让4层与3层的一些应用通信。主要是在4层跑主app以实现以主app的退出与否决定整个沙箱退出
+                            d(
+                                layer_name='layer4',
+                                unshare_pid=True, unshare_mnt=True,
+                                unshare_chdir=True, # chdir()不影响其他
+
+                                # uid 变回 1000
+                                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
+
+                                user_shell=True,
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        ],
+    )
+    return layer1
+
+def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
+    dyncfg = d()
+
+    fs_user_mounts = []
+    paths_to_mask = []
+
+    for um in (uc.user_mnts or [] ):
+        if um.mttype == 'appimage':
+            fs_user_mounts += [d(plan='appimg-mount', src=um.src, dist=f'/sbxdir/apps/{um.appname}')]
+            start_sh_content = f'''#!/bin/bash
+                script=$(readlink -f "$0")
+                scriptpath=$(dirname "$script")
+                env APPDIR="$scriptpath/{um.appname}" "$scriptpath"/{um.appname}/AppRun "$@"
+            '''
+            fs_user_mounts += [d(plan='rofile', dist=f'/sbxdir/apps/run_{um.appname}', distmode=0o555, content=start_sh_content)]
+        elif um.mttype in ['bind', 'robind', 'same', 'rosame']:
+            planItem = copy.deepcopy(um)
+            del planItem.mttype
+            planItem.plan = um.mttype
+            fs_user_mounts += [planItem]
+
+    cmds_to_mask = []
+    if uc.mask_xdg_opens:
+        cmds_to_mask += [
+            "firefox", "firefox-esr", "seamonkey", "icecat",
+            "librewolf", "waterfox", "palemoon", "basilisk", "floop", "zen-browser",
+            "chromium", "chromium-browser",
+            "google-chrome", "google-chrome-stable", "ungoogled-chromium",
+            "microsoft-edge", "microsoft-edge-stable",
+            "vivaldi", "brave-browser", "opera",
+            "torbrowser-launcher", "torbrowser",
+            "konqueror", "falkon", "epiphany",
+            "lynx", "w3m", "links", "elinks", "browsh",
+            "dillo", "qutebrowser", "midori", "otter-browser", "xombrero", "luakit", "dooble", "netsurf", "nyxt", "iridium", "surf"
+        ]
+        paths_to_mask += [ path for cmd in cmds_to_mask if (path := which_and_resolve_exist(cmd)) is not None ]
+
+    fs_user_mounts += [d(plan='remountro', dist='/sbxdir/apps', flag=mntflag_apps)]
+
+    dyncfg.fs_user_mounts = fs_user_mounts
+    dyncfg.paths_to_mask = paths_to_mask
+    return dyncfg
+
+# === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
+
+
+
+used_layer_names = []
+def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_cfg : 其父层
+    # 计算本层深度
+    cfg.depth = parent_cfg.depth + 1 if parent_cfg is not None else 1
+
+    CHK( cfg.layer_name, "存在某层没有设置layer_name")
+
+    CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
+    used_layer_names.append(cfg.layer_name)
+
+    if cfg.unshare_pid and not cfg.unshare_mnt:
+        raise_exit(f"层{cfg.layer_name}启用了unshare_pid但没有启用unshare_mnt")
+    if (cfg.newrootfs or cfg.fs) and not cfg.unshare_mnt:
+        raise_exit(f"层{cfg.layer_name}设置了newrootfs或fs但没有启用unshare_mnt")
+    if bool(cfg.fs) != bool(cfg.newrootfs):
+        raise_exit(f"层{cfg.layer_name}: fs和newrootfs若有则应该两个都有")
+
+    # 检查fs条目
+    if cfg.fs:
+        cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
+    for fsItem in (cfg.fs or []):
+        if fsItem.dist:
+            fsItem.dist = napath(fsItem.dist)
+        if fsItem.src:
+            fsItem.src = napath(fsItem.src)
+
+    if cfg.envs_unset:
+        cfg.envs_unset = [item for item in cfg.envs_unset if item is not None]
+    if cfg.envset_grps:
+        cfg.envset_grps = [item for item in cfg.envset_grps if item is not None]
+
+    # 对第1层检查
+    if cfg.depth == 1:
+        CHK( cfg.unshare_pid, "第1层未启用 unshare_pid(要求启用)")
+        CHK( len(cfg.sublayers) == 1, "第1层的sublayers数组的元素个数不为1 （要求为1）")
+
+    # 对第2层检查
+    if cfg.depth == 2:
+        CHK( cfg.unshare_mnt, "第2层未启用 unshare_mnt （要求启用）")
+        CHK( cfg.newrootfs, "第2层未启用 newrootfs （要求启用）")
+        CHK( cfg.fs, "第2层未设置 fs （要求设置）")
+        if not any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs): # # 第2层（仅一个子容器）的fs必须设置 'dup-rootfs' 这个工作
+            raise_exit("第2层的fs中无 batch_plan='dup-rootfs' 的条目 （要求有）")
+        if not any( pItem.batch_plan == 'mask-privacy' for pItem in cfg.fs): # # 第2层（仅一个子容器）的fs必须设置 'dup-rootfs' 这个工作
+            raise_exit("第2层的fs中无 batch_plan='mask-privacy' 的条目 （要求有）")
+
+    if cfg.layer_name == 'layer3': # 对第3层检查
+        if cfg.fs and any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs) :
+            raise_exit(f"层{cfg.layer_name}不应该在fs中使用 batch_plan='dup-rootfs'，因为上一层是最后一层允许看到主机文件的层")
+        if not (cfg.unshare_pid and cfg.unshare_mnt and cfg.unshare_chdir and cfg.unshare_fd and cfg.unshare_cg and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
+            raise_exit(f"层{cfg.layer_name}未把 [unshare_pid, unshare_mnt, unshare_chdir, unshare_fd, unshare_cg, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
+        if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
+            raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
+
+    if cfg.sublayers :
+        cfg.sublayers = [sublyr for sublyr in cfg.sublayers if not sublyr.disabled]
+    if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
+        if not any( pItem.batch_plan == 'sbxdir-in-newrootfs' for pItem in cfg.fs):
+            raise_exit(f"层{cfg.layer_name}设置了变根，且要创建子容器，但其fs中无 batch_plan = 'sbxdir-in-newrootfs' 的条目 （此情况下要求有）")
+    for sublyr_cfg in (cfg.sublayers or []):
+        recursive_lyrs_jobs(si, sublyr_cfg, cfg)
+
+
+
+def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
+    # sbxdir_path/ :
+        # cfg/ :
+            # si.json
+            # bootsbx.py
+            # sbx.xxx.name
+            # sbx.name -> sbx.xxx.name
+            # lyr_cfg.xxx.json (多) 包括本层和所有递归子层
+            # evts.xxx.log (暂未实现） (需要build_fs处理 一路通挂载)
+            # tmux.xxx.socket (暂未实现) (需要build_fs处理 一路通挂载)
+        # new.xxx.rootfs (多)所有有 newrootfs 的本层和递归子层
+        # temp  挂载为rw tmpfs
+        # overlays 挂载为tmpfs 可能rw (暂未实现）
+        # apps/ 挂为 tmpfs rw
+    if call_at_begin: # 刚启动脚本
+        target_sbxdir_path = napath(thislyr_cfg.sbxdir_path0)
+        old_sbxdir_path = None
+    elif call_at_buildfs: # 为本层接下来的新文件系统准备的 （可能 变根=新旧路径不同  ，也可能 不变根=新旧路径同）
+        target_sbxdir_path = napath(f'{thislyr_cfg.newrootfs_path}/{thislyr_cfg.sbxdir_path1}')
+        old_sbxdir_path = napath(thislyr_cfg.sbxdir_path0)
+
+    if target_sbxdir_path == old_sbxdir_path:
+        return
+        # 能往下执行，说明是要从空白创建
+    # else:
+    #     creating_new_sbxdir=True
+
+
+    mkdirp(target_sbxdir_path)
+    new_tmpfs_for_sbxdir = True if call_at_buildfs else False
+    if new_tmpfs_for_sbxdir:
+        mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, None)
+
+    Path(f'{target_sbxdir_path}/empty').touch()
+
+    mkdirp(f'{target_sbxdir_path}/apps')
+    if old_sbxdir_path :
+        if not Path(f'{old_sbxdir_path}/apps').is_mount():
+            # 创建新的空的 tmpfs 给apps
+            mount('tmpfs', f'{target_sbxdir_path}/apps', 'tmpfs', mntflag_apps, None)
+        else:
+            # 把上一层的apps bind过来. 不是最后一层就应该要保留rw
+            mount(f'{old_sbxdir_path}/apps', f'{target_sbxdir_path}/apps', None, MS.BIND|mntflag_apps, None)
+
+
+    mkdirp(f'{target_sbxdir_path}/temp')
+    if call_at_buildfs:
+        mount('tmpfs', f'{target_sbxdir_path}/temp', 'tmpfs', mntflag_sbxtemp, None)
+
+
+
+    mkdirp(f'{target_sbxdir_path}/cfg')
+    if not os.path.exists(f'{target_sbxdir_path}/cfg/si.json'):
+        Path(f'{target_sbxdir_path}/cfg/si.json').write_text(json.dumps(si, indent=2, ensure_ascii=False))
+        safe_copy_script(f'{target_sbxdir_path}/cfg/bootsbx.py')
+        Path(f'{target_sbxdir_path}/cfg/sbx.{si.sandbox_name}.name').write_text(si.sandbox_name)
+        os.symlink(f'sbx.{si.sandbox_name}.name', f'{target_sbxdir_path}/cfg/sbx.name')
+
+    # 创建和写 (不包括本层)所有子层（递归） 需要的 路径和文件
+    def create_lyrs_files_recr(lyr_cfg):
+        Path(f'{target_sbxdir_path}/cfg/lyr_cfg.{lyr_cfg.layer_name}.json').write_text(json.dumps(lyr_cfg, indent=2, ensure_ascii=False))
+        if lyr_cfg.newrootfs:
+            mkdirp(f'{target_sbxdir_path}/new.{lyr_cfg.layer_name}.rootfs')
+        for sublyr_cfg in (lyr_cfg.sublayers or [] ) :
+            create_lyrs_files_recr(sublyr_cfg)
+    for sublyr_cfg in (thislyr_cfg.sublayers or [] ) :
+        create_lyrs_files_recr(sublyr_cfg)
+
+    # 判断是最外层 才把 本层配置（即第1层） 和 userconfig 写入
+    if call_at_begin and thislyr_cfg.depth==1:
+        Path(f'{target_sbxdir_path}/cfg/lyr_cfg.{thislyr_cfg.layer_name}.json').write_text(json.dumps(thislyr_cfg, indent=2, ensure_ascii=False) )
+
+    if new_tmpfs_for_sbxdir:
+        mount(None, target_sbxdir_path, None, MS.REMOUNT|MS.RDONLY|mntflag_newsbxdir, None)
+
+   # build_fs 时原有：
+            # mount('tmpfs', f'{real_dist}/overlays', 'tmpfs', flag, None)
+
+def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
+    mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
+
+    sbxinfo = d()
+
+    # 从外部(linux host)启动沙箱的原本用户信息
+    uid = os.getuid()
+    gid = os.getgid()
+    username = pwd.getpwuid(uid).pw_name # 获取当前用户名
+    groupname = grp.getgrgid(gid).gr_name
+    HOME = f'/home/{username}' # 当前用户的家目录路径
+    print(f"启动沙箱的用户为：{username} {groupname}")
+    outest_pid = os.getpid()
+
+    sbxinfo.uid = uid
+    sbxinfo.gid = gid
+    sbxinfo.username = username
+    sbxinfo.groupname = groupname
+    sbxinfo.HOME = HOME
+    sbxinfo.outest_pid = outest_pid
+    sbxinfo.startscript_on_host = scriptfilepath
+    sbxinfo.startdir_on_host = scriptdirpath
+
+    uc = userconfig(sbxinfo) # 用户配置别名
+
+    # 沙箱名。不是子容器层名
+    sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
+    print(f"沙箱名：{sandbox_name}")
+
+    starttime_str = datetime.now().strftime("%m%d-%H%M")
+
+    n = 0
+    while os.path.exists( (outest_sbxdir := f'{PTMP}/{sandbox_name}_{starttime_str}-{n}') ):
+        n+=1
+
+    mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
+    print(f"沙箱工作目录：{outest_sbxdir}")
+    mkdirp(f'{outest_sbxdir}/cfg')    # 创建config目录，此目录内千万不要做挂载
+    os.chdir(outest_sbxdir)
+    print(f'沙箱启动PID: {outest_pid}')
+
+    Path(f'{outest_sbxdir}/cfg/userconfig.json').write_text(json.dumps(uc, indent=2, ensure_ascii=False))
+    Path(f'{outest_sbxdir}/cfg/sbx.{outest_pid}.pid').write_text(str(outest_pid))
+    os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/cfg/sbx.pid')
+
+    if uc.pythonbin:
+        pythonbin = uc.pythonbin
+        sbxinfo.pythonbin = pythonbin
+    sbxinfo.sandbox_name = sandbox_name
+    sbxinfo.outest_sbxdir = outest_sbxdir
+
+    dyncfg = gen_dynamic_cfg(sbxinfo, uc)
+    layer1_cfg = gen_container_cfgs(sbxinfo, uc, dyncfg)
+    recursive_lyrs_jobs(sbxinfo, layer1_cfg, None)
+
+    # 还要加将给app的cli参数
+    return sbxinfo, layer1_cfg
+
+def main():
+    # sys.argv[0] 是这个.py文件, sys.argv[1] 是cli传给此脚本的第1个参数
+    if not len(sys.argv)>=2 or sys.argv[1] != '--lyrcfg' :
+        # 是顶层
+        is_outest = True # 是顶层
+    else: # 是子层
+        is_outest = False # 是子层
+        lyrcfg_file = sys.argv[2]
+
+
+    if is_outest: # 是顶层
+        si, layer1_cfg = init_sbxinfo() # 只有从最外层启动才运行这个函数
+        thislyr_cfg = layer1_cfg
+
+        thislyr_cfg.sbxdir_path0 = si.outest_sbxdir
+
+    else: # 是子层
+        thislyr_cfg = d(json.loads(open(lyrcfg_file).read()))
+        thislyr_cfg.sbxdir_path0 = str(Path(lyrcfg_file).parent.parent)
+        si = d(json.loads(open(f'{thislyr_cfg.sbxdir_path0}/cfg/si.json').read()))
+
+    # 预先算好变根后的 sbxdir_path1
+    if not thislyr_cfg.newrootfs:
+        thislyr_cfg.sbxdir_path1 = thislyr_cfg.sbxdir_path0
+    else:
+        thislyr_cfg.sbxdir_path1 = next((pItem.dist for pItem in thislyr_cfg.fs if pItem.batch_plan == 'sbxdir-in-newrootfs'), None)
+    # sbxdir_path 说明
+    # 本层变根 前 后 的 sbxdir_path ( sbxdir_path0 sbxdir_path1)
+    # 变根前 0 = 刚启动本层启动脚本时
+    # 变根后 1 = 即将运行下层的启动脚本时
+    # 变根不一定发生，由本层配置决定，但也把两个sbxdir_path以 前 后 来称呼
+
+
+    if is_outest:
+        make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=True)
+
+    set_ps1(si, thislyr_cfg, 'beforeUnshare')
+
+    print(f"{thislyr_cfg.layer_name}: 执行unshare")
+    unshare_flag = gen_unshareflag_by_lyrcfg(thislyr_cfg)
+    os.unshare(unshare_flag)
+
+    set_ps1(si, thislyr_cfg, 'afterUnshare')
+
+    print(f"{thislyr_cfg.layer_name}: 即将fork")
+    pid = os.fork()
+    if pid == 0: # 子进程
+        run_in_forked(si, thislyr_cfg)
+        # print(f"{thislyr_cfg.layer_name}: fork后的子进程即将退出")
+        sys.exit()
+    else: # 父进程
+        if is_outest:
+            atexit.register(lambda: cleanup(si) ) # 顶层父进程注册清理函数
+
+        set_ps1(si, thislyr_cfg, 'PaAfterFork')
+
+        _, status = os.waitpid(pid, 0)
+        if os.WIFEXITED(status):
+            exit_code = os.WEXITSTATUS(status)
+            print(f"{thislyr_cfg.layer_name}: fork后的子进程已退出( {exit_code} )")
+        elif os.WIFSIGNALED(status):
+            signal_num = os.WTERMSIG(status)
+            print(f"{thislyr_cfg.layer_name}: fork后的子进程被信号 {signal_num} 终止")
+
+
+def run_in_forked(si, thislyr_cfg):
+    # 一般来说配合 unshare_user
+    if thislyr_cfg.setgroups_deny:
+        # print(f"{thislyr_cfg.layer_name}: setgroups = deny")
+        Path('/proc/self/setgroups').write_text('deny\n')
+    if thislyr_cfg.uid_map:
+        # print(f"{thislyr_cfg.layer_name}: uid_map = {thislyr_cfg.uid_map.strip()}")
+        Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
+    if thislyr_cfg.gid_map:
+        # print(f"{thislyr_cfg.layer_name}: gid_map = {thislyr_cfg.gid_map.strip()}")
+        Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
+
+    set_ps1(si, thislyr_cfg, 'forkedBeforeFs')
+    print(f"{thislyr_cfg.layer_name}: 内部当前 uid={os.getuid()} gid={os.getgid()}")
+
+    # 如果设置了将要变根，现在先提前确定新根的位置
+    if thislyr_cfg.newrootfs:
+        thislyr_cfg.newrootfs_path = f'{thislyr_cfg.sbxdir_path0}/new.{thislyr_cfg.layer_name}.rootfs'
+    else:
+        thislyr_cfg.newrootfs_path = '/'
+    mkdirp(thislyr_cfg.newrootfs_path)
+
+    if thislyr_cfg.fs:
+        build_thislyr_fs(si, thislyr_cfg) # 无论本层是否设置了变根，都调用这个函数
+
+    # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
+    if thislyr_cfg.unshare_pid or thislyr_cfg.newrootfs:
+        new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
+        print(f'{thislyr_cfg.layer_name}: 挂载proc到 {new_proc_path}')
+        mkdirp(new_proc_path)
+        mount('proc', new_proc_path, 'proc', mntflag_proc, None)
+        if thislyr_cfg.drop_caps: # 如果非最后一层，不要让 proc 变 ro ， 否则下一层出错
+            mount(None, new_proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
+    set_ps1(si, thislyr_cfg, 'afterFs')
+
+    # 执行变根 (chroot)
+    if thislyr_cfg.newrootfs:
+        mkdirp(f'{thislyr_cfg.newrootfs_path}/oldroot')
+        print(f'{thislyr_cfg.layer_name}: 准备变根到 {thislyr_cfg.newrootfs_path}')
+        pivot_root(thislyr_cfg.newrootfs_path, f'{thislyr_cfg.newrootfs_path}/oldroot')
+        os.chdir('/')
+        umount('/oldroot', MNT.DETACH)
+        os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
+        mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
+    del thislyr_cfg.newrootfs_path
+    del thislyr_cfg.sbxdir_path0
+
+    print(f'{thislyr_cfg.layer_name}: 本层文件系统就绪 {os.listdir('/')}')
+
+    if thislyr_cfg.sbxdir_path1:
+        os.chdir(thislyr_cfg.sbxdir_path1)
+
+    for env_to_unset in (thislyr_cfg.envs_unset or [] ):
+        os.environ.pop(env_to_unset, None)
+    for envg in (thislyr_cfg.envset_grps or [] ) :
+        print(envg)
+        os.environ.update(envg)
+
+    set_ps1(si, thislyr_cfg, 'afterChroot')
+
+    if thislyr_cfg.drop_caps:
+        drop_caps()
+
+    set_ps1(si, thislyr_cfg, 'afterDropCaps')
+
+    if thislyr_cfg.user_shell:
+        prc = subprocess.run(['/bin/bash', '--norc' ],
+                        stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr
+                        )
+        sys.exit(prc.returncode)
+        # os.execv('/bin/bash', ['/bin/bash', '--norc'])
+    # os.exec*成功后不回来，替换了进程
+        # l/v： 可变参 或 数组 来指定参数
+        # p : 指定path
+        # e : 指定环境变量，不继承父的环境。必须完整路径
+
+    sublayers = thislyr_cfg.sublayers or []
+    print(f"{thislyr_cfg.layer_name}: 本层将生成 {len(sublayers)} 个子层")
+    if len(sublayers) >= 0 and thislyr_cfg.sbxdir_path1 is None:
+        raise_exit(f"{thislyr_cfg.layer_name}设置了要生成子层，但本层的新文件系统没有sbxdir,无法启动子层")
+    for sublyr_cfg in (sublayers or []):
+        print(f"{thislyr_cfg.layer_name}: 将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
+        subprocess.run([
+                si.pythonbin or 'python3',
+                # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
+                # 因此用本层的path1
+                f'{thislyr_cfg.sbxdir_path1}/cfg/bootsbx.py',
+                '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/cfg/lyr_cfg.{sublyr_cfg.layer_name}.json',
+            ],
+        stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
+
+ps1 = ">"
+def set_ps1(si, thislyr_cfg, status):
+    global ps1
+    ps1 = ''.join( [
+        r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
+        ,
+        f'{si.sandbox_name} {thislyr_cfg.layer_name} {status}',
+        r''' | \w > \[\e[0m\]'''
+    ])
+    os.environ['PS1'] = ps1
+
+def build_thislyr_fs(si, thislyr_cfg):
+    # 无论本层是否设置了变根，都调用这个函数
+    # 操作目标的基 可能是 '/' （不变根的话） ,  也可能是新根路径 （变根的话）
+    fsPlans = gen_fsPlans_by_lyrcfg(si, thislyr_cfg)
+    remountPlans = commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans)
+    commit_remounts(remountPlans)
+
+
+def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为本层调用的
+    target_fs_path = thislyr_cfg.newrootfs_path
+    print(f'{thislyr_cfg.layer_name}: 准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
+    remountPlans = []
+    def z(rmtItem):
+        remountPlans.append(rmtItem)
+
+    mkdirp(target_fs_path)
+    if napath(target_fs_path) != '/':
+        mount("tmpfs", target_fs_path, "tmpfs", mntflag_newrootfs, None)
+        mount(None, target_fs_path, None, MS.REC | MS.SLAVE, None)
+        # # 用了slave它还是private,不知原因
+    mkdirp(f'{target_fs_path}/proc') # proc不在这里做，预留个目录
+
+    for pItem in fsPlans:
+        plan = pItem.plan
+        src = pItem.src
+        dist = pItem.dist
+        real_dist = napath(f'{target_fs_path}/{dist}')
+        if plan in ['same', 'rosame', 'bind', 'robind'] :
+            CHK( os.path.exists(src) , f"来源{src}不存在")
+            if plan in ['bind', 'robind'] :
+                src = str(Path(src).resolve())
+            ro = True if plan in ['rosame', 'robind'] else False
+            if Path(src).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
+                symlink(Path(src).readlink(), real_dist)
+                # TODO chroot 前后对symlink做一致性检查
+            elif Path(src).is_dir(): # 文件夹
+                mkdirp(real_dist)
+                mount(src, real_dist, None, mntflag_binddir, None)
+                z(d(dirpath=real_dist, flag=mntflag_binddir )) if ro else None
+            # elif Path(src).is_file():
+            else:
+                # 普通文件可以这这样。猜测 字符设备、块设备、fido、socket 也可以当普通文件一样处理
+                make_file_exist(real_dist)
+                mount(src,  real_dist, None, MS.BIND, None)
+                mount(None, real_dist, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
+            # else:
+                # raise_exit(f"原路径{src}所属文件类型暂未实现处理方式")
+        elif plan in ['tmpfs', 'rotmpfs']:
+            ro = True if plan == 'rotmpfs' else False
+            mkdirp(real_dist)
+            mount('tmpfs', real_dist, 'tmpfs', mntflag_tmpfs , None)
+            z(d(dirpath=real_dist, flag=mntflag_tmpfs)) if ro else None
+        elif plan == 'dir':
+            mkdirp(real_dist)
+        elif plan == 'any-exist': #如果已存在，无论是文件/目录/软链都可以，不存在就建个空文件
+            if not os.path.exists(real_dist):
+                make_file_exist(real_dist)
+        elif plan in ['file', 'rofile'] :
+            # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
+            # 记得永远不要写入目标文件，防止覆盖用户文件
+            ro = True if plan == 'rofile' else False
+            with tempfile.NamedTemporaryFile( dir=f'{target_fs_path}/{thislyr_cfg.sbxdir_path1}/temp', mode='w', delete=False) as f:
+                f.write(pItem.content)
+                make_file_exist(real_dist)
+                mount(f.name, real_dist, None, MS.BIND, None)
+                mount(None,   real_dist, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
+                os.chmod(f.name, pItem.distmode) if pItem.distmode else None
+        elif plan == 'symlink':
+            symlink(pItem.linkto, real_dist)
+            # TODO chroot 前后对symlink做一致性检查
+        elif plan == 'empty-if-exist' :
+            if not os.path.exists(real_dist):
+                continue
+            if Path(real_dist).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
+                raise_exit(f"要保证为空的路径{real_dist}所属文件类型为symlink，暂未实现处理方式")
+            elif Path(real_dist).is_dir(): # 文件夹
+                mount('tmpfs', real_dist, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, 'mode=0000,uid=0,gid=0')
+            elif Path(real_dist).is_char_device() or Path(real_dist).is_block_device(): # 设备文件
+                mount('/dev/null', real_dist,  None, MS.BIND|MS.RDONLY, None)
+                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
+            else: # 普通文件、socket, fifo
+                mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dist,  None, MS.BIND|MS.RDONLY, None)
+                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
+        elif plan == 'sbxdir-in-newrootfs':
+            make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_buildfs=True)
+        elif plan == 'devpts':
+            mkdirp(real_dist)
+            mount('devpts', real_dist, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
+        elif plan == 'appimg-mount':
+            mkdirp(real_dist)
+            src = str(Path(src).resolve())
+            offset = get_appimg_sqoffset(src)
+            run_cmd_fg(['squashfuse', '-o', f'ro,offset={offset}', src, real_dist])
+        elif plan == 'remountro':
+            z(d(dirpath=real_dist, flag=pItem.flag or 0))
+        else:
+            raise_exit(f"无法识别的fsPlan条目 {pItem}")
+
+    return remountPlans
+
+def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,并去重、排序
+    fsPlans = []
+    def a(stepobj):
+        fsPlans.append(stepobj)
+
+    for pItem in lyr_cfg.fs:
+        # 一个 pItem 里， batch_plan 和 plan 只应该出现其中一种
+        batch_plan = pItem.batch_plan # 预设的多个plan的集合
+        plan = pItem.plan # 一个plan
+        if batch_plan == 'dup-rootfs': # 把前一个rootfs复制到子层。包含dev
+            for x in os.listdir('/'):
+                if x == 'proc':
+                    continue
+                if x == 'sbxdir': # 排除/sbxdir
+                    continue
+                a( d( plan='same', dist=f'/{x}', src=f'/{x}' ) )
+            a( d( plan='tmpfs', dist='/run/tmux') ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
+        elif batch_plan == 'sbxdir-in-newrootfs':
+            a( d( plan='sbxdir-in-newrootfs', dist=pItem.dist) )
+        elif batch_plan == 'basic-dev':
+            # 最小 /dev 集合。把常用设备结点从宿主机 bind 进来；并为 shm 提供 tmpfs
+            a( d( plan='rotmpfs', dist='/dev' ) )
+            basic_devs = [ 'null', 'zero', 'full', 'urandom', 'random', 'tty', 'console', ]
+            for dname in basic_devs:
+                a( d( plan='same', dist=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
+            a( d( plan='devpts',  dist='/dev/pts') )
+            a( d( plan='symlink', dist='/dev/ptmx', linkto='pts/ptmx' ) )
+            a( d( plan='symlink', dist='/dev/fd',     linkto='/proc/self/fd' ) )
+            a( d( plan='symlink', dist='/dev/stdin',  linkto='/proc/self/fd/0' ) )
+            a( d( plan='symlink', dist='/dev/stdout', linkto='/proc/self/fd/1' ) )
+            a( d( plan='symlink', dist='/dev/stderr', linkto='/proc/self/fd/2' ) )
+            a( d( plan='symlink', dist='/dev/core',   linkto='/proc/kcore' ) )
+            a( d( plan='tmpfs', dist='/dev/shm' ) )
+        elif batch_plan == 'container-rootfs':
+            # 只读挂载的重要系统路径
+            paths_to_rosame = [ '/bin', '/sbin', '/usr', '/lib64', '/lib', '/etc',
+                '/var/lib/ca-certificates', '/var/lib/dbus', '/var/cache/fontconfig' , ]
+            for p in paths_to_rosame:
+                a( d( plan='rosame', dist=p, src=p ) )
+            # 需要 tmpfs 的可写路径（容器内部用）
+            paths_to_tmpfs = [ '/run', '/tmp', '/root', '/mnt',
+                '/var', '/var/lib', '/var/cache', f'/run/user/{si.uid}', '/run/user/0',
+                '/run/tmux' , f'{si.HOME}' , f'{si.HOME}/.cache' ]
+            for p in paths_to_tmpfs:
+                a( d( plan='tmpfs', dist=p ) )
+            a( d( plan='symlink', dist='/var/run', linkto='/run' ) )
+        elif batch_plan == 'mask-privacy':
+            path_maskfile = f'{si.HOME}/.config/box-in-box-linux/paths_never_access.txt'
+            maskfile = Path(path_maskfile)
+            paths_to_mask = maskfile.read_text().splitlines() if maskfile.exists() else []
+            paths_to_mask = [path.strip() for path in paths_to_mask if path.strip()]
+            print(f'从{path_maskfile}读出{len(paths_to_mask)}个路径要屏蔽')
+            for path in paths_to_mask:
+                CHK( path.startswith('/'), "paths_never_access.txt中有不是以'/'的条目")
+                path = napath(path)
+                if os.path.exists(path):
+                    a( d( plan='empty-if-exist', dist=path) )
+
+        # 下面是 plan 而不是 batch_plan 。因为它们两个不应同时有，所以用同一if树
+        elif plan:
+            a( pItem )
+        else:
+            raise_exit(f"无法识别的fs条目 {pItem}")
+
+    for pItem in fsPlans:
+        if pItem.src_same_dist:
+            if pItem.src and not pItem.dist:
+                pItem.dist = pItem.src
+            elif pItem.dist and not pItem.src:
+                pItem.src = pItem.dist
+            elif not pItem.src and not pItem.dist:
+                raise_exit(f"{pItem} 既无 src 也无 dist")
+            elif napath(pItem.src) != napath(pItem.dist):
+                raise_exit(f"{pItem}设置了src_same_dist，但{src}与{dist}不一致")
+            del pItem.src_same_dist
+    fsPlans = [d({'plan': dict.pop(pItem, 'plan'), **pItem}) for pItem in fsPlans]
+
+    # 查找移除重复的dist
+    def find_dup_dist():
+        used_dist = set()
+        for i in reversed(range(0, len(fsPlans))):
+            pItem = fsPlans[i]
+            if pItem.dist in used_dist:
+                print(f"因dist重复(={pItem.dist})，移除{pItem}")
+                fsPlans[i] = d(removed=True)
+            used_dist.add(pItem.dist)
+    find_dup_dist()
+    fsPlans = [pItem for pItem in fsPlans if not pItem.removed]
+
+    # 排序 fsPlans
+    fsPlans = sorted(
+        fsPlans,
+        key=lambda pItem: napath(pItem['dist']).split(os.sep)
+    )
+
+    # [print(pItem) for pItem in fsPlans] # debug
+    return fsPlans
+
+def commit_remounts(remntPlans):
+    for rItem in remntPlans:
+        # print('ro-remounting: ' , rItem) # debug
+        dirpath = rItem.dirpath
+        flag = rItem.flag or 0
+        flag |= os.statvfs(dirpath).f_flag & (MS.NODEV|MS.NOSUID|MS.NOEXEC)
+        mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
+
+
+def gen_unshareflag_by_lyrcfg(ly_cfg):
+    unshare_flag = 0
+    unshare_flag |= os.CLONE_NEWPID if ly_cfg.unshare_pid else 0
+    unshare_flag |= os.CLONE_NEWNS if ly_cfg.unshare_mnt else 0
+    unshare_flag |= os.CLONE_NEWUSER if ly_cfg.unshare_user else 0
+    unshare_flag |= os.CLONE_FS if ly_cfg.unshare_chdir else 0
+    unshare_flag |= os.CLONE_FILES if ly_cfg.unshare_fd else 0
+    unshare_flag |= os.CLONE_NEWCGROUP if ly_cfg.unshare_cg else 0
+    unshare_flag |= os.CLONE_NEWIPC if ly_cfg.unshare_ipc else 0
+    unshare_flag |= os.CLONE_NEWTIME if ly_cfg.unshare_time else 0
+    unshare_flag |= os.CLONE_NEWUTS if ly_cfg.unshare_uts else 0
+    unshare_flag |= os.CLONE_NEWNET if ly_cfg.unshare_net else 0
+    return unshare_flag
+
+def safe_copy_script(copy_target_path):
+    old_content = open(scriptfilepath).read()
+
+    lines_arr = old_content.splitlines()
+
+    start_marker = "# === HIDE_FOR_SUBLAYERS BEGIN ==="
+    end_marker =   "# === HIDE_FOR_SUBLAYERS END ==="
+    removed_mark = "# === HIDDEN_PART ==="
+
+    start_index = None
+    end_index = None
+
+    for i, line in enumerate(lines_arr):
+        if line.startswith(removed_mark):
+            make_file_exist(copy_target_path)
+            mount(scriptfilepath, copy_target_path, None, MS.BIND|MS.RDONLY, None)
+            mount(None, copy_target_path, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
+            return
+        if line.startswith(start_marker):
+            start_index = i
+        elif line.startswith(end_marker):
+            end_index = i
+        if start_index is not None and end_index is not None:
+            break
+    if start_index is None:
+        raise_exit(f"找不到 userconfig 的开始标记 '{start_marker}'")
+    if end_index is None:
+        raise_exit(f"找不到 userconfig 的结束标记 '{end_marker}'")
+    if not (start_index < end_index):
+        raise_exit("userconfig 的开始和结束标记顺序不正确")
+
+    # 将范围内的所有行（包括开始和结束标记行）设置为空字符串
+    lines_arr[start_index] = removed_mark
+    for i in range(start_index+1, end_index + 1):
+        lines_arr[i] = ""
+    script_content_safe = '\n'.join(lines_arr)
+    Path(copy_target_path).write_text(script_content_safe)
+
+
+
+def cleanup(si):
+    print(f"{scriptname} 正在执行清理...")
+    # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
+    # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
+        # new.*.rootfs/
+        # apps/*/
+    paths_rm_sub_files = [ #准备删这些目录的一级子文件和目录本身
+        f'{si.outest_sbxdir}/cfg',
+        f'{si.outest_sbxdir}/temp',
+        f'{si.outest_sbxdir}/apps',
+        *glob(f'{si.outest_sbxdir}/new.*.rootfs'),
+        f'{si.outest_sbxdir}',
+    ]
+    for dirpath in paths_rm_sub_files:
+        for f in Path(dirpath).iterdir():
+            if f.is_file() :
+                try:
+                    f.unlink()
+                except:
+                    pass
+        try:
+            os.rmdir(dirpath)
+        except:
+            pass
+
+#==========================================
+#======= libc 工具函数 =========================
+libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+
+MS = SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
+def mount(source, target, fstype, flags, data): # source可能空， target一定有
+    source = napath(source) if source else None
+    target = napath(target)
+    if source and str(Path(source).resolve()) != source:
+        raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
+    if str(Path(target).resolve()) != target:
+        raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
+    ret = libc.mount(
+        source.encode() if source else None,
+        target.encode(),
+        fstype.encode() if fstype else None,
+        flags,
+        data.encode() if data else None
+    )
+    if ret != 0:
+        print(f"挂载时发生错误 {source} -> {target} | {fstype=} {flags=} {data=}")
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno), target)
+
+MNT=SimpleNamespace(FORCE=1, DETACH=2, EXPIRE=4, NOFOLLOW=8) # 缷载（umount2)可能用到的常数
+def umount(target, flags=0):
+    ret = libc.umount2(
+        target.encode(),
+        flags
+    )
+    if ret != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno), target)
+
+mntflag_newrootfs = MS.NODEV | MS.NOSUID
+mntflag_proc = MS.NODEV|MS.NOSUID|MS.NOEXEC
+mntflag_newsbxdir = MS.NODEV|MS.NOSUID
+mntflag_apps = MS.NODEV|MS.NOSUID
+mntflag_sbxtemp = MS.NOSUID|MS.NODEV
+mntflag_binddir = MS.BIND|MS.REC|MS.NOSUID
+mntflag_tmpfs = MS.NOSUID|MS.NODEV # 这里设置nodev也会让/dev有nodev,但因为每个具体的设备是bind进去的，所以好像没问题
+
+def pivot_root(new_root, put_old):
+    res = libc.pivot_root(ctypes.c_char_p(new_root.encode()), ctypes.c_char_p(put_old.encode()))
+    if res != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno))
+
+def drop_caps():
+    PR_SET_NO_NEW_PRIVS = 38
+    PR_GET_NO_NEW_PRIVS = 39
+    PR_CAPBSET_DROP = 24
+    PR_CAPBSET_READ = 23
+    # 1. 设置 no_new_privs=1
+    ret = libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+    CHK( ret == 0, f"prctl(PR_SET_NO_NEW_PRIVS, 1) 失败, 返回值: {ret}, errno: {ctypes.get_errno()} ({os.strerror(ctypes.get_errno())})")
+
+    # 3. 清空 bounding set (drop caps 0–63)
+    for cap_id in range(64): # 0~63
+        ret = libc.prctl(PR_CAPBSET_DROP, cap_id, 0, 0, 0)
+        if ret != 0:
+             errno_val = ctypes.get_errno()
+             if errno_val not in (1, 22): # 1:EPERM(能力可能已被清除过), 22:EINVAL（内核可能没有这个能力）
+                 CHK( False, f"prctl(PR_CAPBSET_DROP, {cap_id}) 失败, 返回值: {ret}, errno: {errno_val} ({os.strerror(errno_val)})")
+
+    # 2. 清空 effective/permitted/inheritable 能力集 (capset v3)
+    class CapHeader(ctypes.Structure):
+        _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+    class CapData(ctypes.Structure):
+        _fields_ = [("effective", ctypes.c_uint32), ("permitted", ctypes.c_uint32), ("inheritable", ctypes.c_uint32)]
+    cap_hdr = CapHeader(version=0x20080522, pid=0)
+    cap_data = CapData(effective=0, permitted=0, inheritable=0)
+    ret = libc.capset(ctypes.byref(cap_hdr), ctypes.byref(cap_data))
+    CHK( ret == 0, f"capset() 失败, 返回值: {ret}, errno: {ctypes.get_errno()} ({os.strerror(ctypes.get_errno())})")
+
+    # 验证 /proc/self/status 中所有能力字段为 0
+    status_text = Path("/proc/self/status").read_text()
+    for cap_field in ["CapInh", "CapPrm", "CapEff", "CapBnd"]:
+        pattern = rf"^{cap_field}:\t0+$"
+        CHK( re.search(pattern, status_text, re.MULTILINE), f"{cap_field} 在 /proc 里显示未清除")
+    CHK( re.search(r"^NoNewPrivs:\t1$", status_text, re.MULTILINE), "NoNewPrivs != 1 in /proc")
+
+    # libc 验证 no_new_privs
+    CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs设置失败')
+    # libc 验证 bounding set
+    for cap_id in range(40 +1): # 内核只支持0~40
+        CHK( libc.prctl(PR_CAPBSET_READ, cap_id, 0, 0, 0) == 0, f'cap_id {cap_id} 降权失败')
+
+
+
+#============================
+
+def mkdirp(dirpath):
+    os.makedirs(dirpath, exist_ok=True)
+
+def napath(pstr):
+    if not str(pstr.startswith('/')):
+        raise_exit(f"不是绝对路径： {pstr}")
+    return  ''.join( [ '/' , os.path.normpath(pstr).strip('/') ] )
+
+def make_file_exist(path): # 路径不能已有目录
+    if Path(path).is_dir():
+        raise_exit(f"{path}已是文件夹")
+    if not os.path.exists(path):
+        mkdirp(Path(path).parent)
+        Path(path).touch()
+
+def symlink(linkto, dist):  # linkto：要创建的软链的指向 .  dist: 在哪个位置创建软链。
+    if Path(dist).is_symlink() and Path(dist).readlink() == linkto:
+        return
+    mkdirp(Path(dist).parent)
+    os.symlink(linkto, dist)
+
+def which_and_resolve_exist(cmd):
+    path = shutil.which(cmd)
+    if not path:
+        return None
+    try:
+        return str(Path(path).resolve(strict=True))
+    except FileNotFoundError:
+        return None
+
+def run_cmd_fg(cmds_list):
+    prc = subprocess.Popen(cmds_list,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, bufsize=1, universal_newlines=True
+                         )
+    prc.wait()
+    if prc.returncode != 0:
+        raise_exit(f"命令运行未成功（{prc.returncode}）")
+
+class FileContent:
+    def __init__(self, data):
+        if isinstance(data, (list, dict)):
+            self._content = json.dumps(data, indent=2, ensure_ascii=False)
+        else:
+            self._content = str(data)
+        self._size_bytes = len(self._content.encode('utf-8'))
+    def __str__(self):
+        return f"<FileContent size={self._size_bytes}>"
+    def __repr__(self):
+        return self.__str__()
+
+
+class EnhancedFalse:
+    def __str__(self):
+        raise Exception("脚本试图字符串化一个不存在的成员")
+    def __repr__(self):
+        raise Exception("脚本试图字符串化一个不存在的成员")
+    def __bool__(self):
+        return False
+
+FALSE = EnhancedFalse()
+
+
+class EnhancedDict(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for key, value in self.items():
+            if isinstance(value, dict) and not isinstance(value, EnhancedDict):
+                self[key] = EnhancedDict(value)
+            elif isinstance(value, list):
+                self[key] = self._convert_list(value)
+    def _convert_list(self, lst):
+        new_list = []
+        for item in lst:
+            if isinstance(item, dict) and not isinstance(item, EnhancedDict):
+                new_list.append(EnhancedDict(item))
+            elif isinstance(item, list):
+                new_list.append(self._convert_list(item))
+            else:
+                new_list.append(item)
+        return new_list
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        try:
+            return self[name]
+        except KeyError:
+            # 如果键不存在，则返回 我们自定义的
+            return FALSE
+    def __setattr__(self, name, value):
+        self[name] = value
+    def __delattr__(self, name):
+        try:
+            del self[name]
+        except KeyError:
+            pass
+    def __setitem__(self, key, value):
+        processed_value = value
+        if isinstance(value, dict) and not isinstance(value, EnhancedDict):
+            processed_value = EnhancedDict(value)
+        elif isinstance(value, list):
+             processed_value = self._convert_list(value)
+        super().__setitem__(key, processed_value)
+d = EnhancedDict
+
+def raise_exit(err_msg):
+    raise Exception(err_msg)
+    sys.exit(1)
+
+def CHK( condition, errmsg='某项检查失败'):
+    if not condition:
+        raise_exit(errmsg)
+
+ASK_OPEN='''\
+#!/bin/bash
+
+PARAS="$@"
+
+TEXT="是否复制以下内容？"
+if [[ "$PARAS" ]] ; then
+    TEXT="$TEXT\n$PARAS"
+fi
+
+kdialog --yesnocancel "$TEXT"
+DIALOG_R=$?
+
+if [[ $DIALOG_R -eq 0 ]]; then
+    echo "$PARAS" | xclip -i /dev/stdin  -selection clipboard
+fi
+
+EXITCODE=$DIALOG_R
+[[ $DIALOG_R -eq 2 ]] && EXITCODE=0
+exit $EXITCODE
+'''
+
+def get_appimg_sqoffset(appimg_path):
+    elfHeader = open(appimg_path, 'rb').read(64)
+    (bitness,endianness) = struct.unpack("4x B B 58x", elfHeader);
+    (shoff,shentsize,shnum) = struct.unpack(
+        (">" if endianness == 2 else "<") +
+        ("40x Q 10x H H 2x" if bitness == 2 else "32x L 10x H H 14x"),
+        elfHeader
+    );
+    return (shoff + shentsize * shnum)
+
+#=====================================================
+# 常量
+PTMP = '/tmp/sbxs' # 不同沙箱实例共用的 主临时目录
+
+if __name__ == "__main__":
+    # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
+    scriptfilepath = os.path.abspath(__file__)
+    scriptdirpath = os.path.dirname(scriptfilepath)  # 获取脚本所在目录
+    scriptdirname = os.path.basename(scriptdirpath) # 获取脚本所在目录名
+    scriptname = os.path.basename(scriptfilepath)  # 获取脚本文件名（含扩展名）
+    scriptnamenoext = os.path.splitext(scriptname)[0]  # 获取脚本文件名（不含扩展名）
+
+    main()
