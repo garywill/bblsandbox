@@ -37,7 +37,7 @@
     - [x] 内部环境变量控制
     - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPriv
 - [x] 可挂载AppImage
-- 容器内使用GUI
+- 沙箱内使用GUI
     - [x] 可选暴露真实X11接口
     - [] 可选使用Xephyr隔离X11
     - [] 可选使用Xpra隔离的无缝X11代理
@@ -80,9 +80,9 @@ user_mnts = [
 gui="realX", # 使用真实的 X11
 ```
 
-会把AppImage里的内容挂载到容器内的`/sbxdir/apps/freecad/`下。 启动容器后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
+会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
 
-容器内app所创建的工程可以保存在`/anypath2/projects_save/`下（用了`src_same_dist`挂载工程目录，容器内外皆以同一路径访问此目录）
+沙箱内app所创建的工程可以保存在`/anypath2/projects_save/`下（用了`src_same_dist`挂载工程目录，沙箱内外皆以同一路径访问此目录）
 
 **例子2：** 沙箱内运行下载的二进制程序
 
@@ -119,7 +119,7 @@ dbus_session="allow", # 输入法等通信需要dbus
 homedir=f'{si.startdir_on_host}/fakehome',
 ```
 
-即可持久化保存容器内家目录文件。（`/anypath/ffx/fakehome`会被挂载到容器内的`/home/用户名`）
+即可持久化保存沙箱内家目录文件。（`/anypath/ffx/fakehome`会被挂载到沙箱内的`/home/用户名`）
 
 **例子3：** 沙箱内直接使用自己的vimrc配置
 
@@ -129,22 +129,79 @@ user_mnts = [
 ],
 ```
 
-## 容器文件系统
+## 沙箱分层结构
 
-一般来说，容器内所运行的“不可信app”所看到的文件系统类似如下：
+这是个可以自由嵌套的沙箱。脚本内已经设置有默认的嵌套模板：
+
+```
+Linux Host 
+  |
+ layer1 (用于统一管理；隔离pid ns；内部提权)
+  |
+  |
+ layer2 (半信任空间：隔离mount ns；屏蔽用户设置的全局屏蔽路径）
+   |
+   |--layer2a (降权；用于运行信任的辅助程序，如 xpra client、dbus-proxy ...）
+   |
+  layer3 (不信任空间：隔离所有ns；
+    |       可见系统基础目录，其余仅用户挂载进去的路径可见）
+    |
+    |--layer4 (降权；用于运行app)
+    |--layer4a (降权；用于运行不信任的辅助程序，如 xpra server ...)
+```
+
+（layer2a和layer4a都用于运行辅助程序，区别在于layer2a可以访问真实的X11接口、dbus接口、真实硬盘文件，而layer4a则不需要访问这些）
+
+以上这个默认的嵌套模板普通用户不需要修改，只需要修改用户选项部分即可。
+
+沙箱成功启动后，用户获得的 user shell （如果要） 是在layer4内。
+
+> 本项目处于早期阶段，不排除以后有修改设计的可能性
+
+模板设置方式类似如下：（进阶用户了解）
+
+```python
+layer1 = d( # 第1层
+    layer_name='layer1', # 默认模板的 layer_name 不要修改
+    unshare_pid=True, unshare_user=True, ......
+    
+    sublayers = [
+        d( # 第2层
+            layer_name='layer2', # 默认模板的 layer_name 不要修改
+            unshare_pid=True, unshare_mnt=True, ....
+            newrootfs=True, fs=[ ..... ], ....
+            
+            sublayers = [
+                d( layer_name='layer2a', .... ), # layer2a实际深度为3, 与layer3同级，但隔离程度大大不同
+                d( layer_name='layer3', ..... , newrootfs=True, fs=[ ..... ], .....
+                    sublayers=[ # 第4层
+                        d( layer_name='layer4', .....  , user_shell=True ),
+                        d( layer_name='layer4a', ..... ),
+                    ],
+                ),
+            ],
+        )
+    ],
+)
+```
+以上只是非常粗略地展示一下默认模板，想要了解的请打开代码查看。
+
+## 沙箱内文件系统
+
+一般来说，沙箱内所运行的“不信任app”所看到的文件系统类似如下：
 
 ```yml
 // # 真实的系统目录
-{'plan': 'rosame', 'dist': '/bin', 'src': '/bin'}
-{'plan': 'rosame', 'dist': '/etc', 'src': '/etc'}
-{'plan': 'rosame', 'dist': '/lib64', 'src': '/lib64'}
+{'plan': 'robind', 'dist': '/bin', 'src': '/bin'}
+{'plan': 'robind', 'dist': '/etc', 'src': '/etc'}
+{'plan': 'robind', 'dist': '/lib64', 'src': '/lib64'}
 .....
 
 // # 最小的/dev
 {'plan': 'rotmpfs', 'dist': '/dev'}
-{'plan': 'same', 'dist': '/dev/console', 'src': '/dev/console'}
-{'plan': 'same', 'dist': '/dev/null', 'src': '/dev/null'}
-{'plan': 'same', 'dist': '/dev/random', 'src': '/dev/random'}
+{'plan': 'bind', 'dist': '/dev/console', 'src': '/dev/console'}
+{'plan': 'bind', 'dist': '/dev/null', 'src': '/dev/null'}
+{'plan': 'bind', 'dist': '/dev/random', 'src': '/dev/random'}
 {'plan': 'devpts', 'dist': '/dev/pts'}
 {'plan': 'tmpfs', 'dist': '/dev/shm'}
 ......
@@ -155,6 +212,9 @@ user_mnts = [
 {'plan': 'tmpfs', 'dist': '/tmp'}
 ......
 
+// # 沙箱配置目录
+{'dist': '/sbxdir'}
+
 // # 以下根据用户配置情况而变
 {'plan': 'appimg-mount', 'src': '/anypath/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
 {'plan': 'robind', 'src': '/anypath/ffx/firefox', 'dist': '/opt/firefox'}
@@ -162,5 +222,13 @@ user_mnts = [
 {'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
 ```
 
-以上文件系统已经写进模板里，不需要普通用户去创建。
+（以上所列文件系统已经写进模板里，不需要用户去创建）
 
+`/sbxdir`是BBL沙箱所需要的目录，它包含：
+
+- 本层及本层的子层的配置信息
+- 本层与layer1及与主机通信所需要的文件
+- AppImage挂载点
+- 启动子层所用的脚本
+- 子层的新rootfs挂载点
+- ...
