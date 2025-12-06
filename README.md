@@ -39,7 +39,7 @@
 - [x] 可挂载AppImage
 - 沙箱内使用GUI
     - [x] 可选暴露真实X11接口
-    - [] 可选使用Xephyr隔离X11
+    - [x] 可选使用Xephyr隔离X11
     - [] 可选使用Xpra隔离的无缝X11代理
     - [] 可选暴露wayland接口
     - [] 可选Xephyr/Xvfb/x11vnc窗口内运行的隔离的完整桌面环境
@@ -61,7 +61,7 @@
 
 可选：
 
-- squashfuse
+- squashfuse, Xephyr
 
 ## 简单用例 
 
@@ -256,3 +256,7 @@ layer1 = d( # 第1层
 - 启动子层所用的脚本
 - 子层的新rootfs挂载点
 - ...
+
+## 如何编辑多层嵌套模板
+
+TBD
