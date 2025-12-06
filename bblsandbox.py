@@ -621,14 +621,18 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
                 mkdirp(real_dist)
                 mount(src, real_dist, None, mntflag_binddir, None)
                 z(d(dirpath=real_dist, flag=mntflag_binddir )) if ro else None
-            # elif Path(src).is_file():
-            else:
-                # 普通文件可以这这样。猜测 字符设备、块设备、fido、socket 也可以当普通文件一样处理
+            elif (Path(src).is_file() \
+                or Path(src).is_char_device() \
+                or Path(src).is_block_device() ) :
+                # 普通文件可以这这样。猜测 字符设备、块设备 也可以当普通文件一样处理
                 make_file_exist(real_dist)
                 mount(src,  real_dist, None, MS.BIND, None)
                 mount(None, real_dist, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
-            # else:
-                # raise_exit(f"原路径{src}所属文件类型暂未实现处理方式")
+            elif Path(src).is_socket(): # 已知socket不能remount成ro
+                make_file_exist(real_dist)
+                mount(src,  real_dist, None, MS.BIND|MS.RDONLY, None)
+            else:
+                raise_exit(f"原路径{src}所属文件类型暂未实现处理方式")
         elif plan in ['tmpfs', 'rotmpfs']:
             ro = True if plan == 'rotmpfs' else False
             mkdirp(real_dist)
