@@ -215,6 +215,18 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
     used_layer_names.append(cfg.layer_name)
 
+    # 配置中的数组类型去除None成员
+    if cfg.fs:
+        cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
+    if cfg.sublayers :
+        cfg.sublayers = [sublyr for sublyr in cfg.sublayers if not sublyr.disabled]
+    if cfg.dropcap_then_cmds :
+        cfg.dropcap_then_cmds = [cmd for cmd in cfg.dropcap_then_cmds if cmd is not None]
+    if cfg.envs_unset:
+        cfg.envs_unset = [item for item in cfg.envs_unset if item is not None]
+    if cfg.envset_grps:
+        cfg.envset_grps = [item for item in cfg.envset_grps if item is not None]
+
     if cfg.unshare_pid and not cfg.unshare_mnt:
         raise_exit(f"层{cfg.layer_name}启用了unshare_pid但没有启用unshare_mnt")
     if (cfg.newrootfs or cfg.fs) and not cfg.unshare_mnt:
@@ -223,18 +235,21 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         raise_exit(f"层{cfg.layer_name}: fs和newrootfs若有则应该两个都有")
 
     # 检查fs条目
-    if cfg.fs:
-        cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
     for fsItem in (cfg.fs or []):
         if fsItem.dist:
             fsItem.dist = napath(fsItem.dist)
         if fsItem.src:
             fsItem.src = napath(fsItem.src)
 
-    if cfg.envs_unset:
-        cfg.envs_unset = [item for item in cfg.envs_unset if item is not None]
-    if cfg.envset_grps:
-        cfg.envset_grps = [item for item in cfg.envset_grps if item is not None]
+    if len(cfg.dropcap_then_cmds or [])>0 and not cfg.drop_caps:
+        raise_exit(f"层{cfg.layer_name}设置了dropcap_then_cmds但没有启用drop_caps")
+
+    if len(cfg.dropcap_then_cmds or [])>0 and len(cfg.sublayers or []) > 0 :
+        raise_exit(f"层{cfg.layer_name}同时设置有dropcap_then_cmds和sublayers （不能同时有）")
+
+    if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
+        if not any( pItem.batch_plan == 'sbxdir-in-newrootfs' for pItem in cfg.fs):
+            raise_exit(f"层{cfg.layer_name}设置了变根，且要创建子容器，但其fs中无 batch_plan = 'sbxdir-in-newrootfs' 的条目 （此情况下要求有）")
 
     # 对第1层检查
     if cfg.depth == 1:
@@ -246,9 +261,9 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         CHK( cfg.unshare_mnt, "第2层未启用 unshare_mnt （要求启用）")
         CHK( cfg.newrootfs, "第2层未启用 newrootfs （要求启用）")
         CHK( cfg.fs, "第2层未设置 fs （要求设置）")
-        if not any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs): # # 第2层（仅一个子容器）的fs必须设置 'dup-rootfs' 这个工作
+        if not any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs):
             raise_exit("第2层的fs中无 batch_plan='dup-rootfs' 的条目 （要求有）")
-        if not any( pItem.batch_plan == 'mask-privacy' for pItem in cfg.fs): # # 第2层（仅一个子容器）的fs必须设置 'dup-rootfs' 这个工作
+        if not any( pItem.batch_plan == 'mask-privacy' for pItem in cfg.fs):
             raise_exit("第2层的fs中无 batch_plan='mask-privacy' 的条目 （要求有）")
 
     if cfg.layer_name == 'layer3': # 对第3层检查
@@ -259,11 +274,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
             raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
 
-    if cfg.sublayers :
-        cfg.sublayers = [sublyr for sublyr in cfg.sublayers if not sublyr.disabled]
-    if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
-        if not any( pItem.batch_plan == 'sbxdir-in-newrootfs' for pItem in cfg.fs):
-            raise_exit(f"层{cfg.layer_name}设置了变根，且要创建子容器，但其fs中无 batch_plan = 'sbxdir-in-newrootfs' 的条目 （此情况下要求有）")
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg)
 
