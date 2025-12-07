@@ -706,6 +706,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
                 mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dist,  None, MS.BIND|MS.RDONLY, None)
                 mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
         elif plan == 'sbxdir-in-newrootfs':
+            CHK(dist == '/sbxdir', "sbxdir-in-newrootfs的dist必须为/sbxdir")
             make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_buildfs=True)
         elif plan == 'devpts':
             mkdirp(real_dist)
