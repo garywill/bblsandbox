@@ -818,7 +818,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         key=lambda pItem: napath(pItem['dist']).split(os.sep)
     )
 
-    # [print(pItem) for pItem in fsPlans] # debug
+    # [print(f'{lyr_cfg.layer_name}:', pItem) for pItem in fsPlans] # debug
     return fsPlans
 
 def commit_remounts(remntPlans):
