@@ -107,7 +107,6 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                         ],
 
                         newrootfs=True, # 有newrootfs则必须有fs
-                        fs_src_is_zrootfs=True,
                         fs=[ # fs全称fs_plans_for_new_rootfs 。
                             d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
                             d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
@@ -642,7 +641,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
 
     for pItem in fsPlans:
         plan = pItem.plan
-        src = (pItem.src if not thislyr_cfg.fs_src_is_zrootfs else f'/zrootfs/{pItem.src}') if pItem.src else None
+        src = pItem.src
         dist = pItem.dist
         real_dist = napath(f'{target_fs_path}/{dist}')
         if plan in ['same', 'rosame', 'bind', 'robind'] :
@@ -745,7 +744,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                 a( d( plan='same', dist=napath(f'{distbase}/{x}') , src=f'/{x}' ) )
             a( d( plan='tmpfs', dist=napath(f'{distbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
         elif batch_plan == 'sbxdir-in-newrootfs':
-            a( d( plan='sbxdir-in-newrootfs', dist=pItem.dist) )
+            a( d({'plan': dict.pop(pItem, 'batch_plan'), **pItem} ) )
         elif batch_plan == 'basic-dev':
             # 最小 /dev 集合。把常用设备结点从宿主机 bind 进来；并为 shm 提供 tmpfs
             a( d( plan='rotmpfs', dist='/dev' ) )
