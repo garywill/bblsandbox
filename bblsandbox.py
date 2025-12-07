@@ -63,6 +63,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                 fs=[ # fs全称fs_plans_for_new_rootfs 。
                     # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
                     d(batch_plan='container-rootfs'),
+                    d(batch_plan='basic-dev'),
                     d(batch_plan='mask-privacy', distbase='/'),
                     d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
 
