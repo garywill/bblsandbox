@@ -642,7 +642,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
 
     for pItem in fsPlans:
         plan = pItem.plan
-        src = pItem.src
+        src = (pItem.src if not thislyr_cfg.fs_src_is_zrootfs else f'/zrootfs/{pItem.src}') if pItem.src else None
         dist = pItem.dist
         real_dist = napath(f'{target_fs_path}/{dist}')
         if plan in ['same', 'rosame', 'bind', 'robind'] :
