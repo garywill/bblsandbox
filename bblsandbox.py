@@ -734,15 +734,19 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         batch_plan = pItem.batch_plan # 预设的多个plan的集合
         plan = pItem.plan # 一个plan
         if batch_plan == 'dup-rootfs': # 把前一个rootfs复制到子层。包含dev
-            distbase = pItem.distbase
+            distbase = pItem.distbase or '/'
+            srcbase = pItem.srcbase or '/'
             CHK( distbase in ['/', '/zrootfs'], "dup-rootfs要求distbase必须为'/'或'/zrootfs'")
+            CHK( srcbase in ['/', '/zrootfs'],  "dup-rootfs要求srcbase 必须为'/'或'/zrootfs'")
             a( d( plan='rotmpfs', dist=distbase , flag=mntflag_newrootfs) ) if distbase != '/' else None
-            for x in os.listdir('/'):
-                if x == 'proc':
+            for x in os.listdir(srcbase):
+                if x in [
+                    'proc',
+                    'sbxdir',
+                    'zrootfs',
+                ]:
                     continue
-                if x == 'sbxdir': # 排除/sbxdir
-                    continue
-                a( d( plan='same', dist=napath(f'{distbase}/{x}') , src=f'/{x}' ) )
+                a( d( plan='same', dist=napath(f'{distbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
             a( d( plan='tmpfs', dist=napath(f'{distbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
         elif batch_plan == 'sbxdir-in-newrootfs':
             a( d({'plan': dict.pop(pItem, 'batch_plan'), **pItem} ) )
