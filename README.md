@@ -151,6 +151,8 @@ Linux Host
    |
    |--layer2a (降权；用于运行信任的辅助程序，如 xpra client、dbus-proxy ...）
    |
+ layer2h (过度)
+    |
   layer3 (不信任空间：隔离所有ns；
     |       可见系统基础目录，其余仅用户挂载进去的路径可见）
     |
@@ -181,12 +183,17 @@ layer1 = d( # 第1层
             
             sublayers = [
                 d( layer_name='layer2a', .... ), # layer2a实际深度为3, 与layer3同级，但隔离程度大大不同
-                d( layer_name='layer3', ..... , newrootfs=True, fs=[ ..... ], .....
-                    sublayers=[ # 第4层
-                        d( layer_name='layer4', .....  , user_shell=True ),
-                        d( layer_name='layer4a', ..... ),
-                    ],
-                ),
+                d( 
+                    layer_name='layer2h', 
+                    sublayers = [
+                        d( layer_name='layer3', ..... , newrootfs=True, fs=[ ..... ], .....
+                            sublayers=[ # 第4层
+                                d( layer_name='layer4', .....  , user_shell=True ),
+                                d( layer_name='layer4a', ..... ),
+                            ],
+                        ),
+                    ] 
+                )
             ],
         )
     ],
