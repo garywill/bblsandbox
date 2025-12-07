@@ -32,7 +32,7 @@ def userconfig(si): # 这个只在顶层解析一次
 
         user_mnts = [
             # d(mttype='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
-            # d(mttype='robind', src=f'{si.startdir_on_host}', src_same_dist=1),
+            # d(mttype='robind', src=f'{si.startdir_on_host}', SDS=1),
         ],
 
         # 输入法等通信需要dbus
@@ -73,11 +73,11 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                     d(plan='tmpfs', dist='/run/user/0'),
                     d(plan='tmpfs', dist=f'/run/user/{si.uid}'),
                     d(plan='tmpfs', dist=f'{si.HOME}'),
-                    d(plan='robind', dist=f'{si.HOME}/.cache', src_same_dist=1),
-                    d(plan='robind', dist=f'{si.HOME}/.fonts', src_same_dist=1),
-                    d(plan='robind', dist=f'{si.HOME}/.fonts.conf', src_same_dist=1),
-                    d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', src_same_dist=1),
-                    d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', src_same_dist=1),
+                    d(plan='robind', dist=f'{si.HOME}/.cache', SDS=1),
+                    d(plan='robind', dist=f'{si.HOME}/.fonts', SDS=1),
+                    d(plan='robind', dist=f'{si.HOME}/.fonts.conf', SDS=1),
+                    d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+                    d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
                 ],
                 sublayers = [
                     d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
@@ -131,16 +131,16 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                             d(plan='bind', dist=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
 
                             *([
-                            d(plan='robind', dist=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', src_same_dist=1),
+                            d(plan='robind', dist=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
                             d(plan='robind', dist='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
                             ] if uc.gui=='realX' else [] ),
 
                             d(plan='robind', src='/tmp/.X11-unix/X10', dist='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
 
                             *([
-                            d(plan='robind', dist=f'{si.HOME}/.fonts', src_same_dist=1),
-                            d(plan='robind', dist=f'{si.HOME}/.fonts.conf', src_same_dist=1),
-                            d(plan='robind', dist=f'{si.HOME}/.cache/fontconfig', src_same_dist=1),
+                            d(plan='robind', dist=f'{si.HOME}/.fonts', SDS=1),
+                            d(plan='robind', dist=f'{si.HOME}/.fonts.conf', SDS=1),
+                            d(plan='robind', dist=f'{si.HOME}/.cache/fontconfig', SDS=1),
                             ] if uc.gui else [] ),
 
                             d(plan='rofile', dist=shutil.which("xdg-open"), distmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
@@ -790,7 +790,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
             raise_exit(f"无法识别的fs条目 {pItem}")
 
     for pItem in fsPlans:
-        if pItem.src_same_dist:
+        if pItem.SDS:
             if pItem.src and not pItem.dist:
                 pItem.dist = pItem.src
             elif pItem.dist and not pItem.src:
@@ -798,8 +798,8 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
             elif not pItem.src and not pItem.dist:
                 raise_exit(f"{pItem} 既无 src 也无 dist")
             elif napath(pItem.src) != napath(pItem.dist):
-                raise_exit(f"{pItem}设置了src_same_dist，但{src}与{dist}不一致")
-            del pItem.src_same_dist
+                raise_exit(f"{pItem}设置了SDS，但{src}与{dist}不一致")
+            del pItem.SDS
     fsPlans = [d({'plan': dict.pop(pItem, 'plan'), **pItem}) for pItem in fsPlans]
 
     # 查找移除重复的dist
