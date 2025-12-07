@@ -15,7 +15,6 @@ from glob import glob
 def userconfig(si): # 这个只在顶层解析一次
     uc = d(
         sandbox_name='', # 沙箱名称
-        # pythonbin='python3.12', # path to python binary
 
         # 若不设置 homedir ，则会用 tmpfs 当 $HOME
         # homedir=f'{si.startdir_on_host}/fakehome',
@@ -421,9 +420,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     Path(f'{outest_sbxdir}/cfg/sbx.{outest_pid}.pid').write_text(str(outest_pid))
     os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/cfg/sbx.pid')
 
-    if uc.pythonbin:
-        pythonbin = uc.pythonbin
-        sbxinfo.pythonbin = pythonbin
+    sbxinfo.pythonbin = sys.executable
     sbxinfo.sandbox_name = sandbox_name
     sbxinfo.outest_sbxdir = outest_sbxdir
 
@@ -595,7 +592,7 @@ def run_in_forked(si, thislyr_cfg):
     for sublyr_cfg in (sublayers or []):
         print(f"{thislyr_cfg.layer_name}: 将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
         prc = subprocess.Popen([
-                si.pythonbin or 'python3',
+                si.pythonbin ,
                 # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                 # 因此用本层的path1
                 f'{thislyr_cfg.sbxdir_path1}/cfg/bootsbx.py',
