@@ -407,7 +407,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     starttime_str = datetime.now().strftime("%m%d-%H%M")
 
     n = 0
-    while os.path.exists( (outest_sbxdir := f'{PTMP}/{sandbox_name}_{starttime_str}-{n}') ):
+    while os.path.lexists( (outest_sbxdir := f'{PTMP}/{sandbox_name}_{starttime_str}-{n}') ):
         n+=1
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
@@ -646,7 +646,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         dist = pItem.dist
         real_dist = napath(f'{target_fs_path}/{dist}')
         if plan in ['same', 'rosame', 'bind', 'robind'] :
-            CHK( os.path.exists(src) , f"来源{src}不存在")
+            CHK( os.path.lexists(src) , f"来源{src}不存在")
             if plan in ['bind', 'robind'] :
                 src = str(Path(src).resolve())
             ro = True if plan in ['rosame', 'robind'] else False
@@ -678,7 +678,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         elif plan == 'dir':
             mkdirp(real_dist)
         elif plan == 'any-exist': #如果已存在，无论是文件/目录/软链都可以，不存在就建个空文件
-            if not os.path.exists(real_dist):
+            if not os.path.lexists(real_dist):
                 make_file_exist(real_dist)
         elif plan in ['file', 'rofile'] :
             # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
@@ -694,7 +694,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             symlink(pItem.linkto, real_dist)
             # TODO chroot 前后对symlink做一致性检查
         elif plan == 'empty-if-exist' :
-            if not os.path.exists(real_dist):
+            if not os.path.lexists(real_dist):
                 continue
             if Path(real_dist).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 raise_exit(f"要保证为空的路径{real_dist}所属文件类型为symlink，暂未实现处理方式")
@@ -784,7 +784,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
             for path in paths_to_mask:
                 CHK( path.startswith('/'), "paths_never_access.txt中有不是以'/'的条目")
                 path = napath(path)
-                if os.path.exists(path):
+                if os.path.lexists(path):
                     a( d( plan='empty-if-exist', dist=napath(f'{distbase}/{path}' ) ) )
 
         # 下面是 plan 而不是 batch_plan 。因为它们两个不应同时有，所以用同一if树
