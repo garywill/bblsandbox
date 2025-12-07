@@ -708,6 +708,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
                 mount(f.name, real_dist, None, MS.BIND, None)
                 mount(None,   real_dist, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
                 os.chmod(f.name, pItem.distmode) if pItem.distmode else None
+                # NOTE ?? 但 chmod 应在写入前或写入完成后做，且绑定后权限不一定反映在目标。通常先创建临时文件、chmod，然后 bind mount。 ??
         elif plan == 'symlink':
             symlink(pItem.linkto, real_dist)
             # TODO chroot 前后对symlink做一致性检查
@@ -824,7 +825,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
             elif not pItem.src and not pItem.dist:
                 raise_exit(f"{pItem} 既无 src 也无 dist")
             elif napath(pItem.src) != napath(pItem.dist):
-                raise_exit(f"{pItem}设置了SDS，但{src}与{dist}不一致")
+                raise_exit(f"{pItem}设置了SDS，但src与dist不一致")
             del pItem.SDS
     fsPlans = [d({'plan': dict.pop(pItem, 'plan'), **pItem}) for pItem in fsPlans]
 
@@ -1037,7 +1038,7 @@ def drop_caps():
         print('设置noNewPriv', (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
-    BND_MAX = 40 # NOTE 是否因发行版而异？
+    BND_MAX = 40 # NOTE 是否因发行版而异？ TODO 不要硬编码
 
     show_clear_result = False
     print('清除前', get_caps_dict())
@@ -1126,8 +1127,10 @@ def is_unix_socket_listened(sock_path):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.connect(sock_path)
+        sock.close()
         return True
     except (FileNotFoundError, ConnectionRefusedError):
+        sock.close()
         return False
     finally:
         sock.close()

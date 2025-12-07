@@ -55,7 +55,7 @@
 
 必须：
 
-- 现代Linux Kernel (支持namespace)
+- 现代Linux Kernel (支持unprivileged user namespace)
 - Python >= 3.12
 - bash
 
