@@ -674,8 +674,9 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         elif plan in ['tmpfs', 'rotmpfs']:
             ro = True if plan == 'rotmpfs' else False
             mkdirp(real_dist)
-            mount('tmpfs', real_dist, 'tmpfs', mntflag_tmpfs , None)
-            z(d(dirpath=real_dist, flag=mntflag_tmpfs)) if ro else None
+            flag = pItem.flag or mntflag_tmpfs
+            mount('tmpfs', real_dist, 'tmpfs', flag , None)
+            z(d(dirpath=real_dist, flag=flag)) if ro else None
         elif plan == 'dir':
             mkdirp(real_dist)
         elif plan == 'any-exist': #如果已存在，无论是文件/目录/软链都可以，不存在就建个空文件
