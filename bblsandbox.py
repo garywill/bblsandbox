@@ -2,6 +2,7 @@
 
 # Box-in-Box Linux Sandbox
 # Licensed under GPL
+# https://github.com/garywill/bblsandbox
 
 import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket
 from types import SimpleNamespace
