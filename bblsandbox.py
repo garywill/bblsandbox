@@ -62,21 +62,18 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                 newrootfs=True, # 第2层必须 # 有newrootfs则必须有fs
                 fs=[ # fs全称fs_plans_for_new_rootfs 。
                     # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
-                    d(batch_plan='dup-rootfs'), # 从原'/'遍历一层挂进去。包括/dev。排除/proc。排除/sbxdir。不加ro。
+                    d(batch_plan='container-rootfs'),
+                    d(batch_plan='mask-privacy', distbase='/'),
                     d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
-                    d(batch_plan='mask-privacy'),
-                    d(plan='empty-if-exist', dist=PTMP),
-                    d(plan='tmpfs', dist='/tmp'),
-                    d(plan='tmpfs', dist='/run'),
-                    d(plan='tmpfs', dist='/run'),
-                    d(plan='tmpfs', dist='/run/user/0'),
-                    d(plan='tmpfs', dist=f'/run/user/{si.uid}'),
-                    d(plan='tmpfs', dist=f'{si.HOME}'),
-                    d(plan='robind', dist=f'{si.HOME}/.cache', SDS=1),
-                    d(plan='robind', dist=f'{si.HOME}/.fonts', SDS=1),
-                    d(plan='robind', dist=f'{si.HOME}/.fonts.conf', SDS=1),
+
                     d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
                     d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
+
+                    d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path='), SDS=1 ),
+
+                    d(batch_plan='dup-rootfs', distbase='/zrootfs'), # 排除/proc。不加ro。
+                    d(batch_plan='mask-privacy', distbase='/zrootfs'),
+                    d(plan='empty-if-exist', dist=f'/zrootfs/{PTMP}'),
                 ],
                 sublayers = [
                     d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
@@ -110,6 +107,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                         ],
 
                         newrootfs=True, # 有newrootfs则必须有fs
+                        fs_src_is_zrootfs=True,
                         fs=[ # fs全称fs_plans_for_new_rootfs 。
                             d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
                             d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
