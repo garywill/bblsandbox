@@ -109,7 +109,8 @@ def gen_layer2h(si, uc, dyncfg):
         fs=[
             d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
             d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
-            d(plan='robind', src='/tmp/.X11-unix/X10', dist='/sbxdir/temp/X10'),
+
+            d(plan='robind', src='/tmp/.X11-unix/X10', dist='/sbxdir/temp/X10') if uc.gui=='xephyr' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
     )
