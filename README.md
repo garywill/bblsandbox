@@ -72,9 +72,9 @@
 复制一份BBL的`.py`脚本，与下载的AppImage放在一起:
 
 ```
-/anypath/freecad/bblsbxrun_freecad.py
-/anypath/freecad/FreeCAD.AppImage
-/anypath2/projects_save/
+/anyhdd/freecad/bblsbxrun_freecad.py
+/anyhdd/freecad/FreeCAD.AppImage
+/anyhdd2/projects_save/
 ```
 
 编辑我们的`.py`文件，配置：
@@ -83,22 +83,22 @@
 sandbox_name='freecad', # 沙箱名称
 user_mnts = [
     d(mttype='appimage', appname='freecad',  src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
-    d(mttype='bind', src='/anypath2/projects_save/', src_same_dist=1), 
+    d(mttype='bind', src='/anyhdd2/projects_save/', src_same_dist=1), 
 ],
 gui="realX", # 使用真实的 X11
 ```
 
 会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
 
-沙箱内app所创建的工程可以保存在`/anypath2/projects_save/`下（用了`src_same_dist`挂载工程目录，沙箱内外皆以同一路径访问此目录）
+沙箱内app所创建的工程可以保存在`/anyhdd2/projects_save/`下（用了`src_same_dist`挂载工程目录，沙箱内外皆以同一路径访问此目录）
 
 **例子2：** 沙箱内运行下载的二进制程序
 
 例如下载`firefox.tar.xz`, 解压，像上例一样把解压出来的文件和复制的一份BBL的`.py`脚本放一起:
 
 ```
-/anypath/ffx/bblsbxrun_firefox.py
-/anypath/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
+/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
 ```
 
 编辑我们的`.py`文件，配置：
@@ -116,9 +116,9 @@ dbus_session="allow", # 输入法等通信需要dbus
 以上尚未挂载持久化的路径以保存浏览器profile目录。若需要，可创建一个`fakehome`目录
 
 ```
-/anypath/ffx/bblsbxrun_firefox.py
-/anypath/ffx/fakehome
-/anypath/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
+/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/fakehome
+/anyhdd/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
 ```
 
 并配置
@@ -127,7 +127,7 @@ dbus_session="allow", # 输入法等通信需要dbus
 homedir=f'{si.startdir_on_host}/fakehome',
 ```
 
-即可持久化保存沙箱内家目录文件。（`/anypath/ffx/fakehome`会被挂载到沙箱内的`/home/用户名`）
+即可持久化保存沙箱内家目录文件。（`/anyhdd/ffx/fakehome`会被挂载到沙箱内的`/home/用户名`）
 
 **例子3：** 沙箱内直接使用自己的vimrc配置
 
@@ -240,8 +240,8 @@ layer1 = d( # 第1层
 {'dist': '/sbxdir'}
 
 // # 以下根据用户配置情况而变
-{'plan': 'appimg-mount', 'src': '/anypath/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
-{'plan': 'robind', 'src': '/anypath/ffx/firefox', 'dist': '/opt/firefox'}
+{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
+{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/opt/firefox'}
 {'plan': 'robind', 'dist': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
 {'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
 ```
