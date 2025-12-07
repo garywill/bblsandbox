@@ -91,6 +91,13 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                             ) if uc.gui=='xephyr' else None,
                         ],
                     ),
+                    d( layer_name='layer2h', unshare_pid=True, unshare_mnt=True, unshare_chdir=True,
+                    newrootfs=True,
+                    fs=[
+                        d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
+                        d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+                    ],
+                    sublayers=[
                     # 开始第3层。可以多个子容器了。主app应该在>=4层跑，与主app通信的可以在3层跑，例如dbus-system, 或(不使用dbus proxy时的全隔离)dbus-session
                     d(
                         layer_name='layer3', # 默认模板的 layer_name 不要修改
@@ -168,6 +175,8 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                                 user_shell=True,
                             ),
                         ],
+                    ),
+                    ],
                     ),
                 ],
             )
