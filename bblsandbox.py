@@ -261,6 +261,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
             fsItem.dist = napath(fsItem.dist)
         if fsItem.src:
             fsItem.src = napath(fsItem.src)
+        if fsItem.distbase:
+            fsItem.distbase = napath(fsItem.distbase)
 
     if len(cfg.dropcap_then_cmds or [])>0 and not cfg.drop_caps:
         raise_exit(f"层{cfg.layer_name}设置了dropcap_then_cmds但没有启用drop_caps")
@@ -733,13 +735,16 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         batch_plan = pItem.batch_plan # 预设的多个plan的集合
         plan = pItem.plan # 一个plan
         if batch_plan == 'dup-rootfs': # 把前一个rootfs复制到子层。包含dev
+            distbase = pItem.distbase
+            CHK( distbase in ['/', '/zrootfs'], "dup-rootfs要求distbase必须为'/'或'/zrootfs'")
+            a( d( plan='rotmpfs', dist=distbase , flag=mntflag_newrootfs) ) if distbase != '/' else None
             for x in os.listdir('/'):
                 if x == 'proc':
                     continue
                 if x == 'sbxdir': # 排除/sbxdir
                     continue
-                a( d( plan='same', dist=f'/{x}', src=f'/{x}' ) )
-            a( d( plan='tmpfs', dist='/run/tmux') ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
+                a( d( plan='same', dist=napath(f'{distbase}/{x}') , src=f'/{x}' ) )
+            a( d( plan='tmpfs', dist=napath(f'{distbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
         elif batch_plan == 'sbxdir-in-newrootfs':
             a( d( plan='sbxdir-in-newrootfs', dist=pItem.dist) )
         elif batch_plan == 'basic-dev':
@@ -770,6 +775,8 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                 a( d( plan='tmpfs', dist=p ) )
             a( d( plan='symlink', dist='/var/run', linkto='/run' ) )
         elif batch_plan == 'mask-privacy':
+            distbase = pItem.distbase
+            CHK( distbase in ['/', '/zrootfs'], "mask-privacy要求distbase必须为'/'或'/zrootfs'")
             path_maskfile = f'{si.HOME}/.config/box-in-box-linux/paths_never_access.txt'
             maskfile = Path(path_maskfile)
             paths_to_mask = maskfile.read_text().splitlines() if maskfile.exists() else []
@@ -779,7 +786,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                 CHK( path.startswith('/'), "paths_never_access.txt中有不是以'/'的条目")
                 path = napath(path)
                 if os.path.exists(path):
-                    a( d( plan='empty-if-exist', dist=path) )
+                    a( d( plan='empty-if-exist', dist=napath(f'{distbase}/{path}' ) ) )
 
         # 下面是 plan 而不是 batch_plan 。因为它们两个不应同时有，所以用同一if树
         elif plan:
