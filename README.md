@@ -83,14 +83,14 @@
 sandbox_name='freecad', # 沙箱名称
 user_mnts = [
     d(mttype='appimage', appname='freecad',  src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
-    d(mttype='bind', src='/anyhdd2/projects_save/', src_same_dist=1), 
+    d(mttype='bind', src='/anyhdd2/projects_save/', SDS=1), 
 ],
 gui="realX", # 使用真实的 X11
 ```
 
 会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
 
-沙箱内app所创建的工程可以保存在`/anyhdd2/projects_save/`下（用了`src_same_dist`挂载工程目录，沙箱内外皆以同一路径访问此目录）
+沙箱内app所创建的工程可以保存在`/anyhdd2/projects_save/`下（用了`SDS`挂载工程目录，沙箱内外皆以同一路径访问此目录，`SDS`是"src and dist are same"的缩写）
 
 **例子2：** 沙箱内运行下载的二进制程序
 
@@ -106,8 +106,8 @@ gui="realX", # 使用真实的 X11
 ```python
 sandbox_name='firefox', # 沙箱名称
 user_mnts = [
-    d(mttype='robind', src=f'{si.startdir_on_host}/firefox', src_same_dist=1), 
-    # 也可以去掉上面的`src_same_dist`而改为`dist='/opt/firefox'`。
+    d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
+    # 也可以去掉上面的`SDS`而改为`dist='/opt/firefox'`。
 ],
 gui="realX", # 使用真实的 X11
 dbus_session="allow", # 输入法等通信需要dbus
@@ -133,7 +133,7 @@ homedir=f'{si.startdir_on_host}/fakehome',
 
 ```python
 user_mnts = [
-    d(mttype='robind', src=f'{si.HOME}/.vimrc', src_same_dist=1), 
+    d(mttype='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
 ],
 ```
 
@@ -208,12 +208,12 @@ layer1 = d( # 第1层
 1. 读取本层配置
 1. 根据配置进行unshare（开始ns隔离）
 1. fork。以下步骤都在子进程中执行
-1. 根据配置进行`/proc/self/uid_map`等写入
+1. 根据配置进行`/proc/self/uid_map`等写入（内部提权、降权）
 1. 根据配置建立及挂载本层的新rootfs
 1. 根据配置进行pivot_root
 1. 根据配置修改环境变量
 1. 根据配置降权
-1. 根据配置启动 user shell ，或启动下一层子容器
+1. 根据配置启动 user shell ，或启动下一层子容器，或启动某app
 
 > 本项目处于早期阶段，不排除以后有修改设计的可能性
 
@@ -243,23 +243,23 @@ layer1 = d( # 第1层
 {'plan': 'tmpfs', 'dist': '/tmp'}
 ......
 
-// # 沙箱配置目录
-{'dist': '/sbxdir'}
-
 // # 以下根据用户配置情况而变
 {'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
 {'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/opt/firefox'}
 {'plan': 'robind', 'dist': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
 {'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
+
+// # 沙箱配置目录
+{'dist': '/sbxdir'}
 ```
 
 （以上所列文件系统已经写进模板里，不需要用户去创建）
 
 `/sbxdir`是BBL沙箱所需要的目录，它包含：
 
+- AppImage挂载点（与普通用户有关，以下其余普通用户可以不了解）
 - 本层及本层的子层的配置信息
 - 本层与layer1及与主机通信所需要的文件
-- AppImage挂载点
 - 启动子层所用的脚本
 - 子层的新rootfs挂载点
 - ...
