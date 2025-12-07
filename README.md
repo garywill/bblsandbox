@@ -1,0 +1,272 @@
+English | [中文](README_zh.md)
+
+# Box-in-box Linux Sandbox
+
+A fully customizable, endlessly-nestable Linux sandbox. Box-in-box Linux (BBL).
+
+> Early-stage project — free to try and read the code. Note: runtime strings and code comments are currently not in English.
+
+## Overview
+
+- No install. Minimal dependencies. Single-file Python script. Copy as you like, tweak options and run.
+
+- No root needed. No background daemon. No host cap/suid needed.
+
+- No intentional traces in home or disk. Temp data in `/tmp` deleted automatically
+
+- PID namespace covers children — easy to kill whole sandbox tree.
+
+- Fine-grained control options. Every layer fully customizable.
+
+- Multi-layer namespaces. Run "untrusted" and "semi-trusted" apps in different layers. Nest arbitrarily.
+
+- Image-free: no container images to download like Docker/LXC. Reuse the host system’s files so tools such as vim or git don’t need to be reinstalled; user data and other paths are isolated.
+
+## Why made this? What about its security?
+
+Small personal Firejail-ish experiment. Firejail/Bubblewrap and even `unshare` don't expose some low-level knobs I wanted. I built this to learn about kernel namespaces, permissions, and to provide very fine-grained control — including nesting to arbitrary depth — for scenarios other tools don’t cover.
+
+Early-stage. It works and you can read the code, but it has not been developed or audited by a security team.
+
+## Features and Implementation Status
+
+- [x] No root needed. No background daemon. No host cap/suid needed.
+- [x] Fully customizable nested namespaces
+    - [x] Per-layer PID/mount ... ns controls
+    - [x] Per-layer new rootfs and fine-grained control over filesystem path setup
+        - [x] rw mounts
+        - [x] ro mounts
+        - [ ] overlay 
+        - [x] Creation or temporary override of files (rw/ro); tmpfs directories (rw/ro)
+    - [x] Environment variable control inside the sandbox
+    - [x] UID -> 0 in some layers, back to user in others; drop caps; no_new_privs
+- [x] AppImage mount support
+- GUI:
+    - [x] Optionally expose the host X11 connection
+    - [x] Optionally use Xephyr for an isolated X11 display
+    - [ ] Xpra-based seamless X11 proxy 
+    - [ ] Wayland exposure 
+    - [ ] Full isolated desktop inside Xephyr/Xvfb/x11vnc 
+- [ ] Optional access to real hardware or just GPU  
+- DBus:
+    - [x] Optionally expose the real DBus session socket
+    - [ ] DBus filtering 
+- [ ] Per-layer shells exposed to the host 
+- [ ] Seccomp 
+- [ ] Optional network traffic control 
+
+## Dependencies
+
+Required:
+
+- Modern Linux kernel with namespace support
+- glibc
+- Python >= 3.12
+- bash
+
+Optional (for extra features):
+
+- squashfuse, Xephyr
+
+## Simple usage examples
+
+In following examples, app processes in sandbox can see only ro system dirs, empty home, and some paths/sockets that user explictly allows. 
+
+**Example 1** — Run AppImage in sandbox
+
+Place a copy of BBL script next to an AppImage of some app you downloaded. 
+
+```
+/anyhdd/freecad/bblsbxrun_freecad.py
+/anyhdd/freecad/FreeCAD.AppImage
+/anyhdd2/projects_save/
+```
+
+Edit `.py` file and config like this:
+```python
+sandbox_name='freecad',
+user_mnts = [
+    d(mttype='appimage', appname='freecad', src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
+    d(mttype='bind', src='/anyhdd2/projects_save/', SDS=1),
+],
+gui="realX",
+```
+
+BBL mounts AppImage contents inside the sandbox so AppImage itself doesn’t need to have FUSE caps. This mounts the AppImage under `/sbxdir/apps/freecad/` inside the sandbox. After launching the sandbox, run `/sbxdir/apps/run_freecad` inside it to start the app.
+
+Project files created by the app can be saved under `/anyhdd2/projects_save/` because that host path was bound into the sandbox. The `SDS` flag means “source and destination are the same” so the directory appears with the same path inside and outside the sandbox.
+
+**Example 2** — running a downloaded binary
+
+If you downloaded an app (for example `firefox.tar.xz`) and want to use the app inside the sandbox:
+
+```
+/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/firefox/.... (contains firefox binaries and libraries)
+```
+
+Configure:
+
+```python
+sandbox_name='firefox', # sandbox name
+user_mnts = [
+    d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
+    # alternatively, remove SDS and set dist='/opt/firefox'
+],
+gui="realX",
+dbus_session="allow", # input methods and other components need dbus
+```
+
+If you want to persist the browser profile, provide a fake home directory next to the script:
+
+```
+/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/fakehome
+/anyhdd/ffx/firefox/....
+```
+
+and configure:
+
+```python
+homedir=f'{si.startdir_on_host}/fakehome',
+```
+
+The `fakehome` directory will be mounted into the sandbox at the user’s home path.
+
+**Example 3**— use your existing vimrc inside the sandbox
+
+```python
+user_mnts = [
+    d(mttype='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
+],
+```
+## Sandbox layering model
+
+BBL is a multi-layer, nestable sandbox. The script ships with a default nested template:
+
+```
+Linux Host 
+  |
+ layer1 (management-purpose layer; PID isolation; start inner privilege)
+  |
+ layer2 (semi-trusted zone: mount ns isolation; user global privacy paths masked)
+   |
+   |--layer2a (drop privilege; for trusted companion programs like an xpra client or dbus proxy)
+   |
+ layer2h (handover)
+    |
+  layer3 (untrusted zone: isolates most namespaces; sees system base paths; only data paths explicitly mounted by user are visible)
+    |
+    |--layer4 (drop privilege; where user apps run)
+    |--layer4a (drop privilege; for untrusted companion programs such as an xpra server)
+```
+
+(layer2a and layer4a are both for companion programs. layer2a can access the real X11, DBus, and host filesystem; layer4a is intended for companions that do not need those host interfaces).
+
+Normal users do not need to edit the default template — only tweak the user options section.
+
+When the sandbox is started, an interactive user shell (if requested) will usually run inside layer4.
+
+> This project is early-stage and the design may change.
+
+A compact template looks like: (for advanced users) 
+
+```python
+layer1 = d( # layer 1
+    layer_name='layer1', # do not change the default layer_name
+    unshare_pid=True, unshare_user=True, ......
+    
+    sublayers = [
+        d( # layer 2
+            layer_name='layer2', # do not change the default layer_name
+            unshare_pid=True, unshare_mnt=True, ....
+            newrootfs=True, fs=[ ..... ], ....
+            
+            sublayers = [
+                d( layer_name='layer2a', .... ),
+                d( 
+                    layer_name='layer2h', 
+                    sublayers = [
+                        d( layer_name='layer3', ..... , newrootfs=True, fs=[ ..... ], .....
+                            sublayers=[ # layer 4
+                                d( layer_name='layer4', .....  , user_shell=True ),
+                                d( layer_name='layer4a', ..... ),
+                            ],
+                        ),
+                    ] 
+                )
+            ],
+        )
+    ],
+)
+```
+
+This is only a rough sketch of the default template. For details open the code.
+
+## Startup sequence
+
+Each layer follows this basic flow:
+
+1. Load the layer configuration
+1. Call `unshare()` according to the layer configuration
+1. `fork()` — the following steps run in the child
+1. Temporary privileges escalation or dropping if configured (Write `/proc/self/uid_map` and related files as required) 
+1. Build and mount the layer’s new rootfs (if configured)
+1. pivot_root into the new rootfs (if configured)
+1. Apply configured environment variable changes (if configured)
+1. Drop privileges (if configured)
+1. Launch a user shell, start sublayers, or run application(s), depending on configuration
+
+> The project is early-stage and the implementation may evolve.
+
+## Filesystem view inside the sandbox
+
+A typical untrusted app’s visible filesystem inside the sandbox is assembled from plan entries like:
+
+```yml
+// # system directories read-only from the host
+{'plan': 'robind', 'dist': '/bin', 'src': '/bin'}
+{'plan': 'robind', 'dist': '/etc', 'src': '/etc'}
+{'plan': 'robind', 'dist': '/lib64', 'src': '/lib64'}
+.....
+
+// # minimal /dev
+{'plan': 'rotmpfs', 'dist': '/dev'}
+{'plan': 'bind', 'dist': '/dev/console', 'src': '/dev/console'}
+{'plan': 'bind', 'dist': '/dev/null', 'src': '/dev/null'}
+{'plan': 'bind', 'dist': '/dev/random', 'src': '/dev/random'}
+{'plan': 'devpts', 'dist': '/dev/pts'}
+{'plan': 'tmpfs', 'dist': '/dev/shm'}
+......
+
+// # temporary writable directories
+{'plan': 'tmpfs', 'dist': '/home/username'}
+{'plan': 'tmpfs', 'dist': '/run'}
+{'plan': 'tmpfs', 'dist': '/run/user/1000'}
+{'plan': 'tmpfs', 'dist': '/tmp'}
+......
+
+// # user-configured mounts
+{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
+{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/opt/firefox'}
+{'plan': 'robind', 'dist': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
+{'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
+
+// # sandbox configuration directory
+{'dist': '/sbxdir'}
+```
+
+(These plan entries are included in the default template so users usually don't have to create them manually.)
+
+The `/sbxdir` directory contains:
+
+- AppImage mountpoints (users may need to know about)
+- Configuration and metadata for the current layer and its sublayers
+- Files used for communication with layer1 and the host
+- Scripts used to start sublayers
+- Mountpoints for sublayers’ new rootfs
+- …
+
+## How to edit the layer nesting template
+
+TBD

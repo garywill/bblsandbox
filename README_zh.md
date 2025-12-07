@@ -26,13 +26,13 @@
 
 ## 功能列表与完成状态
 
-- 不需root；不需守护进程；不需任何主机的Cap或suid
+- [x] 不需root；不需守护进程；不需任何主机的Cap或suid
 - [x] 可完全自定义的多层嵌套namespace
     - [x] 每层pid ns、mount ns 等 每种namespace的隔离选项控制
     - [x] 每层的新rootfs挂载与细粒度文件系统路径建立方式控制
         - [x] rw挂载
         - [x] ro挂载
-        - [] overlay
+        - [ ] overlay
         - [x] 创建或临时覆盖文件及其内容(rw/ro)；tmpfs目录(rw/ro)
     - [x] 内部环境变量控制
     - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPriv
@@ -40,22 +40,23 @@
 - 沙箱内使用GUI
     - [x] 可选暴露真实X11接口
     - [x] 可选使用Xephyr隔离X11
-    - [] 可选使用Xpra隔离的无缝X11代理
-    - [] 可选暴露wayland接口
-    - [] 可选Xephyr/Xvfb/x11vnc窗口内运行的隔离的完整桌面环境
-- [] 可选暴露真实物理硬件，或仅显卡渲染所需部分
+    - [ ] 可选使用Xpra隔离的无缝X11代理
+    - [ ] 可选暴露wayland接口
+    - [ ] 可选Xephyr/Xvfb/x11vnc窗口内运行的隔离的完整桌面环境
+- [ ] 可选暴露真实物理硬件，或仅显卡渲染所需部分
 - DBUS
     - [x] 可选暴露真实dbus session接口
-    - [] 可选过滤dbus通信
-- [] 每层子容器shell接口暴露给主机
-- [] 可选的seccomp
-- [] 可选的网络流量控制
+    - [ ] 可选过滤dbus通信
+- [ ] 每层子容器shell接口暴露给主机
+- [ ] 可选的seccomp
+- [ ] 可选的网络流量控制
 
 ## 依赖
 
 必须：
 
 - 现代Linux Kernel (支持unprivileged user namespace)
+- glibc
 - Python >= 3.12
 - bash
 
@@ -65,9 +66,11 @@
 
 ## 简单用例 
 
+以下几个简单例子中，沙箱内app进程都只能看到只读的系统基础目录、空白的家目录，和用户明确指定了可见的路径或接口。
+
 **例子1：** 沙箱内运行下载的AppImage文件
 
-从网络下载任意app的`.AppImage`文件。BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppImage。
+从网络下载任意app的`.AppImage`文件。
 
 复制一份BBL的`.py`脚本，与下载的AppImage放在一起:
 
@@ -88,7 +91,7 @@ user_mnts = [
 gui="realX", # 使用真实的 X11
 ```
 
-会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
+BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppImage。会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
 
 沙箱内app所创建的工程可以保存在`/anyhdd2/projects_save/`下（用了`SDS`挂载工程目录，沙箱内外皆以同一路径访问此目录，`SDS`是"src and dist are same"的缩写）
 
@@ -182,7 +185,7 @@ layer1 = d( # 第1层
             newrootfs=True, fs=[ ..... ], ....
             
             sublayers = [
-                d( layer_name='layer2a', .... ), # layer2a实际深度为3, 与layer3同级，但隔离程度大大不同
+                d( layer_name='layer2a', .... ), 
                 d( 
                     layer_name='layer2h', 
                     sublayers = [
@@ -238,6 +241,7 @@ layer1 = d( # 第1层
 ......
 
 // # 创建空的临时目录
+{'plan': 'tmpfs', 'dist': '/home/username'}
 {'plan': 'tmpfs', 'dist': '/run'}
 {'plan': 'tmpfs', 'dist': '/run/user/1000'}
 {'plan': 'tmpfs', 'dist': '/tmp'}
