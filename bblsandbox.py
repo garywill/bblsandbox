@@ -42,6 +42,7 @@ def userconfig(si): # 这个只在顶层解析一次
     )
     return uc
 
+# layer1 产生
 def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
     layer1 = d( # 第1层不跑任何程序，只用于PID隔离，和退出时的清理工作
         layer_name='layer1', # 默认模板的 layer_name 不要修改
@@ -91,101 +92,106 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                             ) if uc.gui=='xephyr' else None,
                         ],
                     ),
-                    d( # layer2h 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
-                        layer_name='layer2h', unshare_pid=True, unshare_mnt=True, unshare_chdir=True,
-                        newrootfs=True,
-                        fs=[
-                            d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
-                            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
-                        ],
-                        sublayers=[
-                            # 开始第3层。可以多个子容器了。主app应该在>=4层跑，与主app通信的可以在3层跑，例如dbus-system, 或(不使用dbus proxy时的全隔离)dbus-session
-                            d(
-                                layer_name='layer3', # 默认模板的 layer_name 不要修改
-                                unshare_pid=True, unshare_mnt=True,
-                                unshare_chdir=True, # chdir()不影响其他
-                                unshare_fd=True,
-                                unshare_cg=True,
-                                unshare_ipc=True,
-                                unshare_time=True,
-                                unshare_uts=True,
-                                # unshare_net=True,
-
-                                start_after=[
-                                    d(waittype='socket-listened', path='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
-                                ],
-
-                                newrootfs=True, # 有newrootfs则必须有fs
-                                fs=[ # fs全称fs_plans_for_new_rootfs 。
-                                    d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
-                                    d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
-                                    d(plan='empty-if-exist', dist=si.startscript_on_host),
-                                    # *dyncfg.plans_mask_scripts_near_startscript # TODO
-                                    *dyncfg.fs_user_mounts,
-                                    # ---- 以上是不变条目 ----
-
-                                    d(plan='robind', dist='/opt', src='/opt'),
-                                    # TODO overlay /etc
-
-                                    d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
-
-                                    *([
-                                    d(plan='robind', dist='/dev', src='/dev'),
-                                    d(plan='tmpfs',dist='/dev/shm'),
-                                    d(plan='robind', dist='/sys', src='/sys'),
-                                    ] if uc.see_real_hw else [] ),
-
-                                    d(plan='bind', dist=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
-
-                                    *([
-                                    d(plan='robind', dist=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
-                                    d(plan='robind', dist='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
-                                    ] if uc.gui=='realX' else [] ),
-
-                                    d(plan='robind', src='/tmp/.X11-unix/X10', dist='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
-
-                                    *([
-                                    d(plan='robind', dist=f'{si.HOME}/.fonts', SDS=1),
-                                    d(plan='robind', dist=f'{si.HOME}/.fonts.conf', SDS=1),
-                                    d(plan='robind', dist=f'{si.HOME}/.cache/fontconfig', SDS=1),
-                                    ] if uc.gui else [] ),
-
-                                    d(plan='rofile', dist=shutil.which("xdg-open"), distmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
-                                    *[d(plan='empty-if-exist', dist=path) for path in dyncfg.paths_to_mask],
-
-                                    d(plan='bind', dist='/tmp/dbus_session_socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
-                                ],
-                                envs_unset=[
-                                    "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK", "ICEAUTHORITY", "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS", "XDG_CACHE_HOME",
-                                    "XAUTHORITY", "DISPLAY",
-                                    "XAUTHLOCALHOSTNAME",
-                                    "IBUS_ADDRESS", "IBUS_DAEMON_PID",
-                                ],
-                                envset_grps=[
-                                    d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
-                                    d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus_session_socket') if uc.dbus_session else None,
-                                    d(DISPLAY=':10') if uc.gui=='xephyr' else None,
-                                ],
-                                sublayers=[ #开始第4层，这里不可以只搞pid ns不搞其他 (主要是不搞 newrootfs ) ，因为想让4层与3层的一些应用通信。主要是在4层跑主app以实现以主app的退出与否决定整个沙箱退出
-                                    d(
-                                        layer_name='layer4',
-                                        unshare_pid=True, unshare_mnt=True,
-                                        unshare_chdir=True, # chdir()不影响其他
-
-                                        # uid 变回 1000
-                                        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
-
-                                        user_shell=True,
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
+                    gen_layer2h(si, uc, dyncfg)
                 ],
             )
         ],
     )
     return layer1
+
+def gen_layer2h(si, uc, dyncfg):
+    layer2h = d( # layer2h 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
+        layer_name='layer2h', unshare_pid=True, unshare_mnt=True, unshare_chdir=True,
+        start_after=[
+            d(waittype='socket-listened', path='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
+        ],
+        newrootfs=True,
+        fs=[
+            d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
+            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+            d(plan='robind', src='/tmp/.X11-unix/X10', dist='/sbxdir/temp/X10'),
+        ],
+        sublayers=[ gen_layer3(si, uc, dyncfg) ],
+    )
+    return layer2h
+
+def gen_layer3(si, uc, dyncfg):
+    layer3 = d(
+        layer_name='layer3', # 默认模板的 layer_name 不要修改
+        unshare_pid=True, unshare_mnt=True,
+        unshare_chdir=True, # chdir()不影响其他
+        unshare_fd=True,
+        unshare_cg=True,
+        unshare_ipc=True,
+        unshare_time=True,
+        unshare_uts=True,
+        # unshare_net=True,
+
+        newrootfs=True, # 有newrootfs则必须有fs
+        fs=[ # fs全称fs_plans_for_new_rootfs 。
+            d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
+            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+            d(plan='empty-if-exist', dist=si.startscript_on_host),
+            # *dyncfg.plans_mask_scripts_near_startscript # TODO
+            *dyncfg.fs_user_mounts,
+            # ---- 以上是不变条目 ----
+
+            d(plan='robind', dist='/opt', src='/opt'),
+            # TODO overlay /etc
+
+            d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
+
+            *([
+            d(plan='robind', dist='/dev', src='/dev'),
+            d(plan='tmpfs',dist='/dev/shm'),
+            d(plan='robind', dist='/sys', src='/sys'),
+            ] if uc.see_real_hw else [] ),
+
+            d(plan='bind', dist=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
+
+            *([
+            d(plan='robind', dist=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(plan='robind', dist='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
+            ] if uc.gui=='realX' else [] ),
+
+            d(plan='robind', src='/sbxdir/temp/X10', dist='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
+
+            *([
+            d(plan='robind', dist=f'{si.HOME}/.fonts', SDS=1),
+            d(plan='robind', dist=f'{si.HOME}/.fonts.conf', SDS=1),
+            d(plan='robind', dist=f'{si.HOME}/.cache/fontconfig', SDS=1),
+            ] if uc.gui else [] ),
+
+            d(plan='rofile', dist=shutil.which("xdg-open"), distmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
+            *[d(plan='empty-if-exist', dist=path) for path in dyncfg.paths_to_mask],
+
+            d(plan='bind', dist='/tmp/dbus_session_socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
+        ],
+        envs_unset=[
+            "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK", "ICEAUTHORITY", "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS", "XDG_CACHE_HOME",
+            "XAUTHORITY", "DISPLAY",
+            "XAUTHLOCALHOSTNAME",
+            "IBUS_ADDRESS", "IBUS_DAEMON_PID",
+        ],
+        envset_grps=[
+            d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
+            d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus_session_socket') if uc.dbus_session else None,
+            d(DISPLAY=':10') if uc.gui=='xephyr' else None,
+        ],
+        sublayers=[ #开始第4层，这里不可以只搞pid ns不搞其他 (主要是不搞 newrootfs ) ，因为想让4层与3层的一些应用通信。主要是在4层跑主app以实现以主app的退出与否决定整个沙箱退出
+            d(
+                layer_name='layer4',
+                unshare_pid=True, unshare_mnt=True,
+                unshare_chdir=True, # chdir()不影响其他
+
+                # uid 变回 1000
+                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
+
+                user_shell=True,
+            ),
+        ],
+    )
+    return layer3
 
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     dyncfg = d()
