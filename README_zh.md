@@ -110,7 +110,7 @@ BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppIm
 sandbox_name='firefox', # 沙箱名称
 user_mnts = [
     d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
-    # 也可以去掉上面的`SDS`而改为`dist='/opt/firefox'`。
+    # 也可以去掉上面的`SDS`而改为`dist='/sbxdir/apps/firefox'`。
 ],
 gui="realX", # 使用真实的 X11
 dbus_session="allow", # 输入法等通信需要dbus
@@ -249,7 +249,7 @@ layer1 = d( # 第1层
 
 // # 以下根据用户配置情况而变
 {'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
-{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/opt/firefox'}
+{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/sbxdir/apps/firefox'}
 {'plan': 'robind', 'dist': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
 {'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
 

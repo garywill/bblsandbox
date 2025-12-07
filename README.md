@@ -111,7 +111,7 @@ Configure:
 sandbox_name='firefox', # sandbox name
 user_mnts = [
     d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
-    # alternatively, remove SDS and set dist='/opt/firefox'
+    # alternatively, remove SDS and set dist='/sbxdir/apps/firefox'
 ],
 gui="realX",
 dbus_session="allow", # input methods and other components need dbus
@@ -248,7 +248,7 @@ A typical untrusted app’s visible filesystem inside the sandbox is assembled f
 
 // # user-configured mounts
 {'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
-{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/opt/firefox'}
+{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/sbxdir/apps/firefox'}
 {'plan': 'robind', 'dist': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
 {'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
 
