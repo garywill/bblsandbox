@@ -799,7 +799,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         elif batch_plan == 'mask-privacy':
             distbase = pItem.distbase
             CHK( distbase in ['/', '/zrootfs'], "mask-privacy要求distbase必须为'/'或'/zrootfs'")
-            path_maskfile = f'{si.HOME}/.config/box-in-box-linux/paths_never_access.txt'
+            path_maskfile = f'{si.HOME}/.config/bblsandbox/paths_never_access.txt'
             maskfile = Path(path_maskfile)
             paths_to_mask = maskfile.read_text().splitlines() if maskfile.exists() else []
             paths_to_mask = [path.strip() for path in paths_to_mask if path.strip()]
