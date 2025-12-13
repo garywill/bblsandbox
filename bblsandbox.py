@@ -703,7 +703,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
             # 记得永远不要写入目标文件，防止覆盖用户文件
             ro = True if plan == 'rofile' else False
-            with tempfile.NamedTemporaryFile( dir=f'{target_fs_path}/{thislyr_cfg.sbxdir_path1}/temp', mode='w', delete=False) as f:
+            with tempfile.NamedTemporaryFile( dir=f'{thislyr_cfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(pItem.content)
                 make_file_exist(real_dist)
                 mount(f.name, real_dist, None, MS.BIND, None)
