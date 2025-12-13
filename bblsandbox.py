@@ -1087,6 +1087,7 @@ def mkdirp(dirpath):
     os.makedirs(dirpath, exist_ok=True)
 
 def napath(pstr):
+    pstr = str(pstr)
     if not str(pstr.startswith('/')):
         raise_exit(f"不是绝对路径： {pstr}")
     return  ''.join( [ '/' , os.path.normpath(pstr).strip('/') ] )
