@@ -843,10 +843,8 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
     fsPlans = [pItem for pItem in fsPlans if not pItem.removed]
 
     # 排序 fsPlans
-    fsPlans = sorted(
-        fsPlans,
-        key=lambda pItem: napath(pItem['dist']).split(os.sep)
-    )
+    fsPlans = sorted(fsPlans, key=lambda pItem: napath(pItem['dist']).split(os.sep) )
+    fsPlans = sorted(fsPlans, key=lambda x: 0 if (isinstance(x, dict) and x.get('plan') == 'sbxdir-in-newrootfs') else 1)
 
     # [print(f'{lyr_cfg.layer_name}:', pItem) for pItem in fsPlans] # debug
     return fsPlans
