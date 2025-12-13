@@ -987,12 +987,17 @@ libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
 MS = SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
 def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
-    source = napath(source) if source and source.startswith('/') else None
+    allowed_nonabs = ['tmpfs', 'proc', 'devpts']
+    if not ( (source is None) or (source in allowed_nonabs) or (source.startswith('/')) ):
+        raise_exit(f"mount的来源{source}不是绝对路径，且不在允许的{allowed_nonabs}之内")
+    if isinstance(source, str):
+        source = napath(source) if source.startswith('/') else source
     target = napath(target)
     if source and source.startswith('/') and rslvy(source) != source:
         raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
     if rslvy(target) != target:
         raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
+    # print(f"执行挂载 {source} --> {target}")
     ret = libc.mount(
         source.encode() if source else None,
         target.encode(),
