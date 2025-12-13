@@ -8,72 +8,61 @@ A Linux sandbox tool that allows unlimited nesting. (**BBL**, short for Box-in-b
 
 ## Overview
 
-An example, the sandbox container tree might look like this:
+This tool focus on a smooth sub-namespaces nesting experience. You can create a tree of layer-on-layer containers as you like.
 
+You can run "untrusted" and "semi-trusted" processes in different layers of one sandbox. 
+
+Every layer's isolation degree is configurable. Every layer's filesystem accessibility range is fine-grained controllable. Arbitrary nestable.
+
+Here's an example, the sandbox container tree might look like:
+
+```verilog
+[Linux Host]
+    [X11]   Real Desktop
+    [dbus-daemon --session]  <A>    Real user dbus service
+
+    [BBL Sandbox]
+      |-[Sub-container : Untrusted zone]
+      |   |
+      |   |-[Sub-container : Untrusted : User App]
+      |   |     [USER-APPS RUN HERE]
+      |   | 
+      |   |-[Sub-container : Untrusted : Companion Processes (Group 2)]
+      |         [Xpra X server]      Isolated X11 Server
+      |         [dbus-proxy]  <C>    Splits and forwards user dbus to internal D and external B
+      |         [dbus-daemon --session]  <D>  Internal user dbus service
+      |         [dbus-daemon --system]    Internal system-level dbus
+      |         [keyring daemon]          Internal Keyring Service
+      |         [icewm]            Lightweight Window Manager, usually paired with Xephyr
+      |         
+      |-[Sub-container : Semi-trusted zone : Companion Processes (Group 11)]
+                [Xephyr]           Isolated X11 Server + Client
+                [Xpra client]      Seamless Isolated X11 Client
+                [dbus-proxy]  <B>  Filters and forwards dbus, relaying between A and C
+
+(Usually not all above will be started. It depends on user options)
 ```
-Linux Host {
-    X11 (Real Desktop)
-    dbus-daemon --session (A) (Real user dbus service)
-    fcitx5-daemon (Real Input Method)
 
-    BBL Sandbox {
-        Sub-container : Companion Processes : Semi-trusted {
-            Xephyr (Isolated X11 Server + Client)
-            Xpra client (Seamless Isolated X11 Client)
-            dbus-proxy (B) (Filters and forwards dbus, relaying between A and C)
-        }
-        Sub-container : Untrusted zone {
-            Sub-container: User App {
-                User apps run here
-            }
-            Sub-container : Companion Processes {
-                Xpra X server (Isolated X11 Server)
-                dbus-proxy (C) (Splits and forwards user dbus to internal (D) and external (B))
-                dbus-daemon --session (D) (Internal user dbus service)
-                dbus-daemon --system (Internal system-level dbus)
-                keyring (Internal Keyring Service)
-                icewm (Lightweight Window Manager, usually paired with Xephyr)
-                kde-plasma (Internally isolated full desktop, usually requires Xephyr)
-                fcitx5-daemon (Independent input method for the internal desktop)
-            }
-        }
-    }
-}
-(Usually not all above will run. It depends on user options)
-```
-
-- You can run "untrusted" and "semi-trusted" apps in different layers of one sandbox. Every layer's isolation degree is configurable.
-
-- Arbitrary nesting. Unlike other tools, this tool focus on a smooth sub-namespace nesting experience. You can create a tree of layer-on-layer containers as you like
-
-- Single-file script. Copy as you like, edit options at file head and run. No install. Minimal dependencies.
-
-- Python script although it is, no dependencies on third-party libs. It uses libc to talk to Linux kernel
-
-- No root needed. No daemon. No host cap/suid needed.
-
-- No intentional traces in home or disk. Temp data in `/tmp` deleted automatically
-
-- PID namespace covers children — easy to kill whole sandbox tree.
-
-- Image-free: no container images to download like Docker/LXC. Reuse the host system’s files so tools such as vim or git don’t need to be reinstalled; user data and other paths are isolated.
+In above example, two sub-containers are for companion processes. Difference is that the "semi-trusted" one can access host's X11 and DBus socket, while the "untrusted" one can't.
 
 ## Why made this? What about its security?
 
-I call it a Firejail alternative. Firejail/Bubblewrap and even official tool `unshare` don't expose some low-level knobs I want. So I built this fully controllable tool. Nesting to arbitrary depth is out main feature, which other tools don't provide.
+I call it a Firejail/Flatpak alternative. Firejail/Bubblewrap and even official tool `unshare` don't expose some low-level knobs I want. So I built this fully controllable tool. Nesting to arbitrary depth and convinient container tree configuring are our main feature, which other tools don't provide.
 
 Early-stage. It works and you can read the code, but it has not been developed or audited by a security team.
 
 ## Features and Implementation Status
 
 - [x] No root needed. No daemon. No host cap/suid needed.
+- [x] No traces in home or disk. Temp data in `/tmp` deleted automatically
+- [x] Image-free: no container images to download like Docker/LXC. Reuse the host system so tools such as vim/git don’t need to be reinstalled inside
 - [x] Fully customizable nested namespaces
-    - [x] Per-layer PID/mount ... ns controls
+    - [x] Per-layer PID/mount/... ns controls
     - [x] Per-layer new rootfs and fine-grained control over filesystem path setup
         - [x] Bind mount (rw/ro)
-        - [ ] overlay 
+        - [ ] Directory overlay 
         - [x] Creation or temporary override of files (rw/ro); tmpfs directories (rw/ro)
-        - [x] symlink
+        - [x] Symlink
     - [x] Environment variable control inside the sandbox
     - [x] UID=0 in layer1, back to uid=1000 in last layer; drop caps; no_new_privs
 - [x] Mount AppImage internally
@@ -87,9 +76,14 @@ Early-stage. It works and you can read the code, but it has not been developed o
 - DBus:
     - [x] Optional host DBus exposure to sandbox
     - [ ] Optional DBus proxy filtering DBus communication
-- [ ] In-container shell socket exposed to host 
 - [ ] Optional Seccomp 
 - [ ] Optional network traffic control 
+- Instance Manage and Args Passing
+    - [x] Multi-instances for same sandbox (Multiple startups of same sandbox will have multi-instances running. Each other isolated) 
+    - [ ] Single-instance for same sandbox (Multiple startups of same sandbox will send args to the first-started running instance)
+- [ ] In-container shell socket exposed to host 
+- Single-file script. Copy as you like, edit options at file head and run. No install. Minimal dependencies.
+    
 
 ## Dependencies
 
@@ -100,9 +94,11 @@ Required:
 - Python >= 3.12
 - bash
 
+(Python script although it is, no dependencies on third-party libraries. It uses libc to talk to Linux kernel)
+
 Optional (for extra features):
 
-- squashfuse (mount AppImage)
+- squashfuse (mount AppImage internally)
 - Xephyr (isolated X11)
 
 ## Simple usage examples
@@ -198,7 +194,7 @@ Linux Host
     |--layer4a (drop caps; for untrusted companion programs, such as xpra server)
 ```
 
-(layer2a and layer4a are both for companion programs. layer2a can access real X11, real DBus, and host filesystem, while layer4a doesn't need to access them).
+(layer2a and layer4a are both for companion programs. layer2a can access real X11 and real DBus, while layer4a not).
 
 **Normal users do not need to edit the default template — only tweak the user options section.**
 

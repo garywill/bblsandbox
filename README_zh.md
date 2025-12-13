@@ -2,72 +2,63 @@
 
 可无限嵌套的Linux沙箱。Box-in-box Linux Sandbox 下文简称 **BBL**。
 
-## 总览
+## 概览
 
-一个例子，沙箱容器树可能是像这样的：
+本工具设计成可以层层嵌套创建许多子namespace。你可以配置出想要的容器树。
 
-```
-Linux Host {
-    X11 (真实桌面)
-    dbus-daemon --session (A) (真实dbus用户服务)
-    fcitx5-daemon (真实输入法)
+“不信任”进程 与 “半信任”进程 可在一个沙箱的不同层运行。
+
+可精细控制每层隔离程度、每层可见文件范围。可无限嵌套。
+
+以下是一个例子，沙箱容器树可能是像这样的：
+
+```verilog
+[Linux Host]
+    [X11] (真实桌面)
+    [dbus-daemon --session] (A) (真实dbus用户服务)
+    [fcitx5-daemon] (真实输入法)
     
-    BBL沙箱 {
-        子容器:辅助进程:半信任 {
-            Xephyr (隔离X11服务端+客户端)
-            Xpra client (无缝隔离X11客户端)
-            dbus-proxy (B) (dbus通信过滤和转发在A与C之间转发)
-        }
-        子容器:不信任空间 {
-            子容器:用户App {
-                用户要运行的App
-            }
-            子容器:辅助进程 {
-                Xpra X server (隔离的X11服务端)
-                dbus-proxy (C) (分流转发用户dbus通信到内部(D)和外部(B))
-                dbus-daemon --session (D) (内部的用户dbus服务)
-                dbus-daemon --system (内部的系统级dbus)
-                keyring (内部的Keyring服务)
-                icewm (轻量级WM,一般配合Xephyr)
-                kde-plasma (内部隔离的完整桌面，一般需要Xephyr)
-                fcitx5-daemon (内部桌面独立的输入法)
-            }
-        }
-    }
-}
-（真正运行时，不会以上全部都启动，会根据选项决定启动哪些）
+    [BBL沙箱] 
+     |--[子容器:不信任空间] 
+     |   |
+     |   |--[子容器:用户App:不信任] 
+     |   |      [用户的App在这里跑]
+     |   |  
+     |   |--[子容器:辅助进程(组2):不信任] 
+     |          [Xpra X server] (隔离的X11服务端)
+     |          [dbus-proxy] (C) (分流转发用户dbus通信到内部(D)和外部(B))
+     |          [dbus-daemon --session] (D) (内部的用户dbus服务)
+     |          [dbus-daemon --system] (内部的系统级dbus)
+     |          [keyring] (内部的Keyring服务)
+     |          [icewm] (轻量级WM,一般配合Xephyr)
+     |          
+     |--[子容器:辅助进程(组1):半信任]
+            [Xephyr] (隔离X11服务端+客户端)
+            [Xpra client] (无缝隔离X11客户端)
+            [dbus-proxy] (B) (dbus通信过滤和转发在A与C之间转发)
+        
+（以上并非全都用到，会根据选项决定启动哪些）
 ```
 
-- “不信任app”与“半信任app”可在一个沙箱的不同层运行，可控制每层隔离程度
+上例中，有两个子容器用于运行辅助进程，区别在于“半信任”那个可以访问真实的X11接口、dbus接口，而“不信任”那个则无法访问这些。
 
-- 可无限嵌套。与其他不同，本工具设计成可以层层嵌套创建许多子namespace。你可以配置出想要的容器树
-
-- 单文件脚本，随处复制，依使用需求修改头部选项。免安装，精简依赖
-
-- 虽然是Python脚本，但直接通过libc调用Linux内核功能，不需第三方Python库
-
-- 不需root；不需守护进程；不需任何主机的Cap或suid
-
-- 不留痕，不主动在家目录或硬盘任何位置留下文件。`/tmp`内的临时文件自动清理
-
-- PID NS 统领所有子进程，便于一键杀死不遗漏
-
-- 无镜像容器。不需要像Docker、LXC那样下载系统镜像。用现有真实系统作为基础，内部vim、git等工具无需重复安装，隔离其余用户数据和文件
 
 ## 为什么创建这个脚本？它安全性如何？
 
-我暂时把它称为Firejail替代品。Bubblewrap等工具我也用过，它们不让用户控制每一个细节，就连官方工具unshare也是，因此自己做一个完全可控的。主攻其他工具不支持的沙箱多层namespace无限嵌套。
+我暂时把它称为Firejail/Flatpak替代品。Bubblewrap等工具我也用过，它们不让用户控制每一个细节，就连官方工具unshare也是，因此自己做一个完全可控的。主攻其他工具不支持的沙箱多层namespace无限嵌套，和便捷的容器树配置。
 
 这个目前是非常早期的阶段，可以使用，但要知道，这个脚本目前无专业团队参与。
 
 ## 功能列表与完成状态
 
 - [x] 不需root；不需守护进程；不需任何主机的Cap或suid
+- [x] 不留痕，不主动在家目录或硬盘任何位置留下文件。`/tmp`内的临时文件自动清理
+- [x] 无镜像容器。不需要像Docker、LXC那样下载系统镜像。用现有真实系统作为基础，内部诸如vim、git等工具无需重复安装
 - [x] 可完全自定义的多层嵌套namespace
     - [x] 每层pid ns、mount ns 等 每种namespace的隔离选项控制
     - [x] 每层的新rootfs挂载与细粒度文件系统路径建立方式控制
         - [x] bind挂载(rw/ro)
-        - [ ] overlay
+        - [ ] 文件夹overlay
         - [x] 创建或临时覆盖文件及其内容(rw/ro)；tmpfs目录(rw/ro)
         - [x] symlink
     - [x] 内部环境变量控制
@@ -83,9 +74,13 @@ Linux Host {
 - DBus
     - [x] 可选暴露真实dbus接口给沙箱
     - [ ] 可选过滤dbus通信
-- [ ] 容器内部shell接口暴露给主机
 - [ ] 可选的seccomp
 - [ ] 可选的网络流量控制
+- 实例管理与命令参数传递
+    - [x] 同种沙箱多实例（从主机多次启动同种沙箱运行同一App的多个实例，互相隔离)
+    - [ ] 同种沙箱单实例（从主机启动一种沙箱后，再次启动同种沙箱则传递启动命令的参数至已运行的沙箱）
+- [ ] 容器内部shell接口暴露给主机
+- 单文件脚本，随处复制，依使用需求修改头部选项。免安装，精简依赖
 
 ## 依赖
 
@@ -96,9 +91,11 @@ Linux Host {
 - Python >= 3.12
 - bash
 
+(虽然是Python脚本，但直接通过libc调用Linux内核功能，不需第三方Python库)
+
 可选：
 
-- squashfuse (AppImage挂载)
+- squashfuse (内部AppImage挂载)
 - Xephyr (隔离X11)
 
 ## 简单用例 
@@ -199,7 +196,7 @@ Linux Host
     |--layer4a (降权；用于运行不信任的辅助程序，如 xpra server ...)
 ```
 
-（layer2a和layer4a都用于运行辅助程序，区别在于layer2a可以访问真实的X11接口、dbus接口、真实硬盘文件，而layer4a则不需要访问这些）
+（layer2a和layer4a都用于运行辅助程序，区别在于layer2a可以访问真实的X11接口、dbus接口，而layer4a则不需要访问这些）
 
 **以上这个默认的嵌套模板普通用户不需要修改，只需要修改用户选项部分**即可。
 
