@@ -143,12 +143,10 @@ def gen_layer3(si, uc, dyncfg):
             d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
             d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
             d(plan='empty-if-exist', dist=si.startscript_on_host),
-            # *dyncfg.plans_mask_scripts_near_startscript # TODO
             *dyncfg.fs_user_mounts,
             # ---- 以上是不变条目 ----
 
             d(plan='robind', dist='/opt', src='/opt') if uc.allow_opt else None,
-            # TODO overlay /etc
 
             d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
 
@@ -1148,6 +1146,15 @@ def drop_caps():
     class CapData(ctypes.Structure):
         _fields_ = [ ("effective", ctypes.c_uint32 * 2), ("permitted", ctypes.c_uint32 * 2), ("inheritable", ctypes.c_uint32 * 2), ]
 
+    def get_caps_dict():
+        status_text = Path("/proc/self/status").read_text()
+        cap_fields = {}
+        for cap_field in ["CapInh", "CapPrm", "CapEff", "CapBnd",  "CapAmb", "NoNewPrivs" ]:
+            pattern = rf"^{cap_field}:\s*(\S+)"
+            match = re.search(pattern, status_text, re.MULTILINE)
+            cap_fields[cap_field] = match.group(1)
+        return cap_fields
+
     def capset_clear(eff=False, prm=False, inh=False,  doprint=False):
         cap_data = CapData()
         for i in range(2):
@@ -1184,7 +1191,7 @@ def drop_caps():
         log('设置noNewPriv', (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
-    BND_MAX = 40 # NOTE 是否因发行版而异？ TODO 不要硬编码
+    BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
 
     show_clear_result = False
     log('降权前', get_caps_dict())
@@ -1202,12 +1209,10 @@ def drop_caps():
     # ------验证------------
 
     # 验证 /proc/self/status 中所有能力字段为 0
-    status_text = Path("/proc/self/status").read_text()
-    for cap_field in ["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"]:
-        pattern = rf"^{cap_field}:\t0+$"
-        CHK( re.search(pattern, status_text, re.MULTILINE), f"在/proc里显示未清除 {cap_field} ")
-    # 验证 /proc/self/status 中 NoNewPrivs
-    CHK( re.search(r"^NoNewPrivs:\t1$", status_text, re.MULTILINE), "在/proc里显示NoNewPrivs未成功设置")
+    caps_dict = get_caps_dict()
+    CHK( caps_dict.pop('NoNewPrivs') == '1' , "在/proc里显示NoNewPrivs未成功设置" )
+    for k,v in caps_dict.items():
+        CHK( re.search(rf"^0+$", v), f"在/proc里显示未清除 {k} ")
 
     # libc验证 no_new_privs
     CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs清除验证失败')
@@ -1216,14 +1221,6 @@ def drop_caps():
         CHK( libc.prctl(PR_CAPBSET_READ, cap_id, 0, 0, 0) == 0, f'cap_id {cap_id} 降权失败')
 
 
-def get_caps_dict():
-    status_text = Path("/proc/self/status").read_text()
-    cap_fields = {}
-    for cap_field in ["CapInh", "CapPrm", "CapEff", "CapBnd",  "CapAmb", "NoNewPrivs" ]:
-        pattern = rf"^{cap_field}:\s*(\S+)"
-        match = re.search(pattern, status_text, re.MULTILINE)
-        cap_fields[cap_field] = match.group(1)
-    return cap_fields
 
 def set_pdeathsig(): # 由layer1的fork出来的子进程调用
     PR_SET_PDEATHSIG = 1

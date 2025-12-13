@@ -76,26 +76,26 @@ Early-stage. It works and you can read the code, but it has not been developed o
         - [x] symlink
     - [x] Environment variable control inside the sandbox
     - [x] UID=0 in layer1, back to uid=1000 in last layer; drop caps; no_new_privs
-- [x] AppImage mount support
-- GUI:
-    - [x] Optionally expose the host X11 connection to sandbox
-    - [x] Optionally use Xephyr for an isolated X11 display
-    - [ ] Xpra-based seamless X11 proxy 
-    - [ ] Optionally Wayland exposure to sandbox
-    - [ ] Full isolated desktop inside Xephyr/Xvfb/x11vnc 
+- [x] Mount AppImage internally
+- Use GUI in sandbox:
+    - [x] Optional host X11 exposure to sandbox
+    - [x] Optional isolated X11 with Xephyr
+    - [ ] Optional Xpra seamless X11 proxy 
+    - [ ] Optional host Wayland exposure to sandbox
+    - [ ] Optional isolated full desktop in isolated GUI
 - [ ] Optional access to real hardware or just GPU  
 - DBus:
-    - [x] Optionally expose the real DBus session socket to sandbox
-    - [ ] DBus filtering 
-- [ ] Per-layer shells exposed to the host 
-- [ ] Seccomp 
+    - [x] Optional host DBus exposure to sandbox
+    - [ ] Optional DBus proxy filtering DBus communication
+- [ ] In-container shell socket exposed to host 
+- [ ] Optional Seccomp 
 - [ ] Optional network traffic control 
 
 ## Dependencies
 
 Required:
 
-- Modern Linux kernel with namespace support
+- Linux kernel >= 6.3 (with unprivileged user namespace support)
 - glibc
 - Python >= 3.12
 - bash

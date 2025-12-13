@@ -72,18 +72,18 @@ Linux Host {
         - [x] symlink
     - [x] 内部环境变量控制
     - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPrivs
-- [x] 可挂载AppImage
+- [x] 可挂载AppImage在内部mount ns
 - 沙箱内使用GUI
     - [x] 可选暴露真实X11接口给沙箱
     - [x] 可选使用Xephyr隔离X11
     - [ ] 可选使用Xpra隔离的无缝X11代理
     - [ ] 可选暴露wayland接口给沙箱
-    - [ ] 可选Xephyr/Xvfb/x11vnc窗口内运行的隔离的完整桌面环境
+    - [ ] 可选在一窗口内运行的隔离的完整桌面环境
 - [ ] 可选暴露真实物理硬件，或仅显卡渲染所需部分
 - DBus
-    - [x] 可选暴露真实dbus session接口给沙箱
+    - [x] 可选暴露真实dbus接口给沙箱
     - [ ] 可选过滤dbus通信
-- [ ] 每层子容器shell接口暴露给主机
+- [ ] 容器内部shell接口暴露给主机
 - [ ] 可选的seccomp
 - [ ] 可选的网络流量控制
 
@@ -91,7 +91,7 @@ Linux Host {
 
 必须：
 
-- 现代Linux Kernel (支持unprivileged user namespace)
+- Linux Kernel >= 6.3 (且支持unprivileged user namespace)
 - glibc
 - Python >= 3.12
 - bash
