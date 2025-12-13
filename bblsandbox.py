@@ -506,6 +506,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     return sbxinfo, layer1_cfg
 
 def main():
+    global loghead
     # sys.argv[0] 是这个.py文件, sys.argv[1] 是cli传给此脚本的第1个参数
     if not len(sys.argv)>=2 or sys.argv[1] != '--lyrcfg' :
         # 是顶层
@@ -525,6 +526,8 @@ def main():
         thislyr_cfg = d(json.loads(open(lyrcfg_file).read()))
         thislyr_cfg.sbxdir_path0 = str(Path(lyrcfg_file).parent.parent)
         si = d(json.loads(open(f'{thislyr_cfg.sbxdir_path0}/cfg/si.json').read()))
+
+    loghead = f'{thislyr_cfg.layer_name}: '
 
     # 预先算好变根后的 sbxdir_path1
     if not thislyr_cfg.newrootfs:
@@ -548,13 +551,13 @@ def main():
 
     set_ps1(si, thislyr_cfg, 'beforeUnshare')
 
-    print(f"{thislyr_cfg.layer_name}: 执行unshare")
+    log(f"执行unshare")
     unshare_flag = gen_unshareflag_by_lyrcfg(thislyr_cfg)
     os.unshare(unshare_flag)
 
     set_ps1(si, thislyr_cfg, 'afterUnshare')
 
-    print(f"{thislyr_cfg.layer_name}: 即将fork")
+    log(f"即将fork")
     pid = os.fork()
     if pid == 0: # 子进程
         # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
@@ -562,7 +565,7 @@ def main():
             set_pdeathsig()
 
         main2(si, thislyr_cfg)
-        # print(f"{thislyr_cfg.layer_name}: fork后的子进程即将退出")
+        # log(f"fork后的子进程即将退出")
         sys.exit()
     else: # 父进程
         if not is_outest:
@@ -575,26 +578,26 @@ def main():
         _, status = os.waitpid(pid, 0)
         if os.WIFEXITED(status):
             exit_code = os.WEXITSTATUS(status)
-            print(f"{thislyr_cfg.layer_name}: fork后的子进程已退出( {exit_code} )")
+            log(f"fork后的子进程已退出( {exit_code} )")
         elif os.WIFSIGNALED(status):
             signal_num = os.WTERMSIG(status)
-            print(f"{thislyr_cfg.layer_name}: fork后的子进程被信号 {signal_num} 终止")
+            log(f"fork后的子进程被信号 {signal_num} 终止")
 
 
 def main2(si, thislyr_cfg):
     # 一般来说配合 unshare_user
     if thislyr_cfg.setgroups_deny:
-        # print(f"{thislyr_cfg.layer_name}: setgroups = deny")
+        # log(f"setgroups = deny")
         Path('/proc/self/setgroups').write_text('deny\n')
     if thislyr_cfg.uid_map:
-        # print(f"{thislyr_cfg.layer_name}: uid_map = {thislyr_cfg.uid_map.strip()}")
+        # log(f"uid_map = {thislyr_cfg.uid_map.strip()}")
         Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
     if thislyr_cfg.gid_map:
-        # print(f"{thislyr_cfg.layer_name}: gid_map = {thislyr_cfg.gid_map.strip()}")
+        # log(f"gid_map = {thislyr_cfg.gid_map.strip()}")
         Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
 
     set_ps1(si, thislyr_cfg, 'forkedBeforeFs')
-    print(f"{thislyr_cfg.layer_name}: 内部当前 uid={os.getuid()} gid={os.getgid()}")
+    log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
     # 如果设置了将要变根，现在先提前确定新根的位置
     if thislyr_cfg.newrootfs:
@@ -609,7 +612,7 @@ def main2(si, thislyr_cfg):
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
     if thislyr_cfg.unshare_pid or thislyr_cfg.newrootfs:
         new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
-        print(f'{thislyr_cfg.layer_name}: 挂载proc到 {new_proc_path}')
+        log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
         if thislyr_cfg.drop_caps: # 如果非最后一层，不要让 proc 变 ro ， 否则下一层出错
@@ -619,14 +622,14 @@ def main2(si, thislyr_cfg):
     # 执行变根 (chroot)
     if thislyr_cfg.newrootfs:
         mkdirp(f'{thislyr_cfg.newrootfs_path}/oldroot')
-        print(f'{thislyr_cfg.layer_name}: 准备变根到 {thislyr_cfg.newrootfs_path}')
+        log(f'准备变根到 {thislyr_cfg.newrootfs_path}')
         pivot_root(thislyr_cfg.newrootfs_path, f'{thislyr_cfg.newrootfs_path}/oldroot')
         os.chdir('/')
         umount('/oldroot', MNT.DETACH)
         os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
         os.chmod('/', 0o555)
         mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
-        print(f'{thislyr_cfg.layer_name}: 本层文件系统就绪 {os.listdir('/')}')
+        log(f'本层文件系统就绪 {os.listdir('/')}')
     del thislyr_cfg.newrootfs_path
     del thislyr_cfg.sbxdir_path0
 
@@ -637,7 +640,7 @@ def main2(si, thislyr_cfg):
     for env_to_unset in (thislyr_cfg.envs_unset or [] ):
         os.environ.pop(env_to_unset, None)
     for envg in (thislyr_cfg.envset_grps or [] ) :
-        print(envg)
+        log(envg)
         os.environ.update(envg)
 
     set_ps1(si, thislyr_cfg, 'afterChroot')
@@ -677,9 +680,9 @@ def main2(si, thislyr_cfg):
         direct_child_procs.append(prc)
 
     sublayers = thislyr_cfg.sublayers or []
-    print(f"{thislyr_cfg.layer_name}: 本层将生成 {len(sublayers)} 个子层")
+    log(f"本层将生成 {len(sublayers)} 个子层")
     for sublyr_cfg in (sublayers or []):
-        print(f"{thislyr_cfg.layer_name}: 将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
+        log(f"将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
         prc = subprocess.Popen([
                 si.pythonbin ,
                 # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
@@ -700,10 +703,10 @@ def main2(si, thislyr_cfg):
             while True:
                 await asyncio.sleep(0.3)
                 if not exist_childtree():
-                    print("子进程树已空，退出")
+                    log("子进程树已空，退出")
                     sys.exit()
                 if should_exit:
-                    print(f"因信号 {signal.Signals(should_exit_signum).name} (={should_exit_signum}) ，即将退出")
+                    log(f"因信号 {signal.Signals(should_exit_signum).name} (={should_exit_signum}) ，即将退出")
                     sys.exit()
         asyncio.run(loop())
 
@@ -782,7 +785,7 @@ def build_thislyr_fs(si, thislyr_cfg):
 
 def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为本层调用的
     target_fs_path = thislyr_cfg.newrootfs_path
-    print(f'{thislyr_cfg.layer_name}: 准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
+    log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
     def z(rmtItem):
         remountPlans.append(rmtItem)
@@ -941,7 +944,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
             maskfile = Path(path_maskfile)
             paths_to_mask = maskfile.read_text().splitlines() if maskfile.exists() else []
             paths_to_mask = [path.strip() for path in paths_to_mask if path.strip()]
-            print(f'从{path_maskfile}读出{len(paths_to_mask)}个路径要屏蔽')
+            log(f'从{path_maskfile}读出{len(paths_to_mask)}个路径要屏蔽')
             for path in paths_to_mask:
                 CHK( path.startswith('/'), "paths_never_access.txt中有不是以'/'的条目")
                 path = napath(path)
@@ -973,7 +976,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         for i in reversed(range(0, len(fsPlans))):
             pItem = fsPlans[i]
             if pItem.dist in used_dist:
-                print(f"因dist重复(={pItem.dist})，移除{pItem}")
+                log(f"因dist重复(={pItem.dist})，移除{pItem}")
                 fsPlans[i] = d(removed=True)
             used_dist.add(pItem.dist)
     find_dup_dist()
@@ -983,12 +986,12 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
     fsPlans = sorted(fsPlans, key=lambda pItem: napath(pItem['dist']).split(os.sep) )
     fsPlans = sorted(fsPlans, key=lambda x: 0 if (isinstance(x, dict) and x.get('plan') == 'sbxdir-in-newrootfs') else 1)
 
-    # [print(f'{lyr_cfg.layer_name}:', pItem) for pItem in fsPlans] # debug
+    # [log(pItem) for pItem in fsPlans] # debug
     return fsPlans
 
 def commit_remounts(remntPlans):
     for rItem in remntPlans:
-        # print('ro-remounting: ' , rItem) # debug
+        # log('ro-remounting: ' , rItem) # debug
         dirpath = rItem.dirpath
         flag = rItem.flag or 0
         flag |= os.statvfs(dirpath).f_flag & (MS.NODEV|MS.NOSUID|MS.NOEXEC)
@@ -1092,7 +1095,7 @@ def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs�
         raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
     if rslvy(target) != target:
         raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
-    # print(f"执行挂载 {source} --> {target}")
+    # log(f"执行挂载 {source} --> {target}")
     ret = libc.mount(
         source.encode() if source else None,
         target.encode(),
@@ -1101,7 +1104,7 @@ def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs�
         data.encode() if data else None
     )
     if ret != 0:
-        print(f"挂载时发生错误 {source} -> {target} | {fstype=} {flags=} {data=}")
+        log(f"挂载时发生错误 {source} -> {target} | {fstype=} {flags=} {data=}")
         errno = ctypes.get_errno()
         raise OSError(errno, os.strerror(errno), target)
 
@@ -1154,14 +1157,14 @@ def drop_caps():
         ret = libc.capset(ctypes.byref(cap_hdr), ctypes.byref(cap_data) )
         errno = ctypes.get_errno() if ret != 0 else None
         errstr = os.strerror(errno) if ret != 0 else None
-        print(f"清除能力集 {eff=} {prm=} {inh=}", (ret, errno, errstr)) if doprint else None
+        log(f"清除能力集 {eff=} {prm=} {inh=}", (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
     def amb_clear(doprint=False):
         ret = libc.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)
         errno = ctypes.get_errno() if ret != 0 else None
         errstr = os.strerror(errno) if ret != 0 else None
-        print('清除amb', (ret, errno, errstr)) if doprint else None
+        log('清除amb', (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
     def bnd_clear(maxid, doprint=False):
@@ -1171,30 +1174,30 @@ def drop_caps():
             errno = ctypes.get_errno() if ret != 0 else None
             errstr = os.strerror(errno) if ret != 0 else None
             results.append((ret, errno, errstr))
-        print('清除bnd', results) if doprint else None
+        log('清除bnd', results) if doprint else None
         return results
 
     def set_nonewpriv(doprint=False):
         ret = libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
         errno = ctypes.get_errno() if ret != 0 else None
         errstr = os.strerror(errno) if ret != 0 else None
-        print('设置noNewPriv', (ret, errno, errstr)) if doprint else None
+        log('设置noNewPriv', (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
     BND_MAX = 40 # NOTE 是否因发行版而异？ TODO 不要硬编码
 
     show_clear_result = False
-    print('降权前', get_caps_dict())
+    log('降权前', get_caps_dict())
     capset_clear(eff=False , prm=True, inh=True,  doprint=show_clear_result)
-    print('清除中', get_caps_dict()) if show_clear_result else None
+    log('清除中', get_caps_dict()) if show_clear_result else None
     amb_clear(doprint=show_clear_result)
-    print('清除中', get_caps_dict()) if show_clear_result else None
+    log('清除中', get_caps_dict()) if show_clear_result else None
     set_nonewpriv(doprint=show_clear_result)
-    print('清除中', get_caps_dict()) if show_clear_result else None
+    log('清除中', get_caps_dict()) if show_clear_result else None
     bnd_clear(BND_MAX,  doprint=show_clear_result)
-    print('清除中', get_caps_dict()) if show_clear_result else None
+    log('清除中', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=True, prm=True, inh=True,  doprint=show_clear_result)
-    print('降权后', get_caps_dict())
+    log('降权后', get_caps_dict())
 
     # ------验证------------
 
@@ -1308,9 +1311,9 @@ class FileContent:
 
 class EnhancedFalse:
     def __str__(self):
-        raise Exception("脚本试图字符串化一个不存在的成员")
+        raise Exception(loghead + "脚本试图字符串化一个不存在的成员")
     def __repr__(self):
-        raise Exception("脚本试图字符串化一个不存在的成员")
+        raise Exception(loghead + "脚本试图字符串化一个不存在的成员")
     def __bool__(self):
         return False
 
@@ -1359,8 +1362,15 @@ class EnhancedDict(dict):
         super().__setitem__(key, processed_value)
 d = EnhancedDict
 
+loghead = ''
+def log(*args, **kwargs):
+    new_args = args
+    if loghead:
+        new_args = ( loghead,  *args)
+    print(*new_args, **kwargs)
+
 def raise_exit(err_msg):
-    raise Exception(err_msg)
+    raise Exception( loghead + err_msg)
     sys.exit(1)
 
 def CHK( condition, errmsg='某项检查失败'):
