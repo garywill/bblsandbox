@@ -130,7 +130,7 @@ gui="realX", # 使用真实的 X11
 
 BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppImage。会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
 
-沙箱内app所创建的工程可以保存在`/anyhdd2/projects_save/`下（用了`SDS`挂载工程目录，沙箱内外皆以同一路径访问此目录，`SDS`是"src and dist are same"的缩写）
+沙箱内app所创建的工程可以保存在`/anyhdd2/projects_save/`下（用了`SDS`挂载工程目录，沙箱内外皆以同一路径访问此目录，`SDS`是"src and dest are same"的缩写）
 
 **例子2：** 沙箱内运行下载的二进制程序
 
@@ -147,7 +147,7 @@ BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppIm
 sandbox_name='firefox', # 沙箱名称
 user_mnts = [
     d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
-    # 也可以去掉上面的`SDS`而改为`dist='/sbxdir/apps/firefox'`。
+    # 也可以去掉上面的`SDS`而改为`dest='/sbxdir/apps/firefox'`。
 ],
 gui="realX", # 使用真实的 X11
 dbus_session="allow", # 输入法等通信需要dbus
@@ -262,35 +262,35 @@ layer1 = d( # 第1层
 
 ```yml
 // # 真实的系统目录
-{'plan': 'robind', 'dist': '/bin', 'src': '/bin'}
-{'plan': 'robind', 'dist': '/etc', 'src': '/etc'}
-{'plan': 'robind', 'dist': '/lib64', 'src': '/lib64'}
+{'plan': 'robind', 'dest': '/bin', 'src': '/bin'}
+{'plan': 'robind', 'dest': '/etc', 'src': '/etc'}
+{'plan': 'robind', 'dest': '/lib64', 'src': '/lib64'}
 .....
 
 // # 最小的/dev
-{'plan': 'rotmpfs', 'dist': '/dev'}
-{'plan': 'bind', 'dist': '/dev/console', 'src': '/dev/console'}
-{'plan': 'bind', 'dist': '/dev/null', 'src': '/dev/null'}
-{'plan': 'bind', 'dist': '/dev/random', 'src': '/dev/random'}
-{'plan': 'devpts', 'dist': '/dev/pts'}
-{'plan': 'tmpfs', 'dist': '/dev/shm'}
+{'plan': 'rotmpfs', 'dest': '/dev'}
+{'plan': 'bind', 'dest': '/dev/console', 'src': '/dev/console'}
+{'plan': 'bind', 'dest': '/dev/null', 'src': '/dev/null'}
+{'plan': 'bind', 'dest': '/dev/random', 'src': '/dev/random'}
+{'plan': 'devpts', 'dest': '/dev/pts'}
+{'plan': 'tmpfs', 'dest': '/dev/shm'}
 ......
 
 // # 创建空的临时目录
-{'plan': 'tmpfs', 'dist': '/home/username'}
-{'plan': 'tmpfs', 'dist': '/run'}
-{'plan': 'tmpfs', 'dist': '/run/user/1000'}
-{'plan': 'tmpfs', 'dist': '/tmp'}
+{'plan': 'tmpfs', 'dest': '/home/username'}
+{'plan': 'tmpfs', 'dest': '/run'}
+{'plan': 'tmpfs', 'dest': '/run/user/1000'}
+{'plan': 'tmpfs', 'dest': '/tmp'}
 ......
 
 // # 以下根据用户配置情况而变
-{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
-{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/sbxdir/apps/firefox'}
-{'plan': 'robind', 'dist': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
-{'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
+{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
+{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
+{'plan': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
+{'plan': 'robind', 'dest': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
 
 // # 沙箱配置目录
-{'dist': '/sbxdir'}
+{'batch_plan': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}
 ```
 
 （以上所列文件系统已经写进模板里，不需要用户去创建）

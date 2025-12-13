@@ -148,7 +148,7 @@ Configure:
 sandbox_name='firefox', # sandbox name
 user_mnts = [
     d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
-    # alternatively, remove SDS and set dist='/sbxdir/apps/firefox'
+    # alternatively, remove SDS and set dest='/sbxdir/apps/firefox'
 ],
 gui="realX",
 dbus_session="allow", # input methods and other components need dbus
@@ -262,35 +262,35 @@ A typical untrusted app’s visible filesystem inside the sandbox is assembled f
 
 ```yml
 // # system directories read-only from the host
-{'plan': 'robind', 'dist': '/bin', 'src': '/bin'}
-{'plan': 'robind', 'dist': '/etc', 'src': '/etc'}
-{'plan': 'robind', 'dist': '/lib64', 'src': '/lib64'}
+{'plan': 'robind', 'dest': '/bin', 'src': '/bin'}
+{'plan': 'robind', 'dest': '/etc', 'src': '/etc'}
+{'plan': 'robind', 'dest': '/lib64', 'src': '/lib64'}
 .....
 
 // # minimal /dev
-{'plan': 'rotmpfs', 'dist': '/dev'}
-{'plan': 'bind', 'dist': '/dev/console', 'src': '/dev/console'}
-{'plan': 'bind', 'dist': '/dev/null', 'src': '/dev/null'}
-{'plan': 'bind', 'dist': '/dev/random', 'src': '/dev/random'}
-{'plan': 'devpts', 'dist': '/dev/pts'}
-{'plan': 'tmpfs', 'dist': '/dev/shm'}
+{'plan': 'rotmpfs', 'dest': '/dev'}
+{'plan': 'bind', 'dest': '/dev/console', 'src': '/dev/console'}
+{'plan': 'bind', 'dest': '/dev/null', 'src': '/dev/null'}
+{'plan': 'bind', 'dest': '/dev/random', 'src': '/dev/random'}
+{'plan': 'devpts', 'dest': '/dev/pts'}
+{'plan': 'tmpfs', 'dest': '/dev/shm'}
 ......
 
 // # temporary writable directories
-{'plan': 'tmpfs', 'dist': '/home/username'}
-{'plan': 'tmpfs', 'dist': '/run'}
-{'plan': 'tmpfs', 'dist': '/run/user/1000'}
-{'plan': 'tmpfs', 'dist': '/tmp'}
+{'plan': 'tmpfs', 'dest': '/home/username'}
+{'plan': 'tmpfs', 'dest': '/run'}
+{'plan': 'tmpfs', 'dest': '/run/user/1000'}
+{'plan': 'tmpfs', 'dest': '/tmp'}
 ......
 
 // # user-configured mounts
-{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dist': '/sbxdir/apps/freecad'}
-{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dist': '/sbxdir/apps/firefox'}
-{'plan': 'robind', 'dist': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
-{'plan': 'robind', 'dist': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
+{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
+{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
+{'plan': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
+{'plan': 'robind', 'dest': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
 
 // # sandbox configuration directory
-{'dist': '/sbxdir'}
+{'batch_plan': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}
 ```
 
 (These plan entries are included in the default template so users usually don't have to create them manually.)

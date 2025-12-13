@@ -70,17 +70,17 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                     # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
                     d(batch_plan='container-rootfs'),
                     d(batch_plan='basic-dev'),
-                    d(batch_plan='mask-privacy', distbase='/'),
-                    d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+                    d(batch_plan='mask-privacy', destbase='/'),
+                    d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
 
                     d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
                     d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
 
                     d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path='), SDS=1 ),
 
-                    d(batch_plan='dup-rootfs', distbase='/zrootfs'), # 排除/proc。不加ro。
-                    d(batch_plan='mask-privacy', distbase='/zrootfs'),
-                    d(plan='empty-if-exist', dist=f'/zrootfs/{PTMP}'),
+                    d(batch_plan='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
+                    d(batch_plan='mask-privacy', destbase='/zrootfs'),
+                    d(plan='empty-if-exist', dest=f'/zrootfs/{PTMP}'),
                 ],
                 sublayers = [
                     d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
@@ -92,8 +92,8 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
 
                         newrootfs=True,
                         fs=[
-                            d(batch_plan='dup-rootfs', distbase='/'),
-                            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+                            d(batch_plan='dup-rootfs', destbase='/'),
+                            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
                         ],
                         dropcap_then_cmds=[
                             d(
@@ -117,9 +117,9 @@ def gen_layer2h(si, uc, dyncfg):
         newrootfs=True,
         fs=[
             d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
-            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
 
-            d(plan='robind', src='/tmp/.X11-unix/X10', dist='/sbxdir/temp/X10') if uc.gui=='xephyr' else None,
+            d(plan='robind', src='/tmp/.X11-unix/X10', dest='/sbxdir/temp/X10') if uc.gui=='xephyr' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
     )
@@ -141,51 +141,52 @@ def gen_layer3(si, uc, dyncfg):
         newrootfs=True, # 有newrootfs则必须有fs
         fs=[ # fs全称fs_plans_for_new_rootfs 。
             d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
-            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
-            d(plan='empty-if-exist', dist=si.startscript_on_host),
+            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
+            d(plan='empty-if-exist', dest=si.startscript_on_host),
             *dyncfg.fs_user_mounts,
             # ---- 以上是不变条目 ----
 
-            d(plan='robind', dist='/opt', src='/opt') if uc.allow_opt else None,
+            d(plan='robind', dest='/opt', src='/opt') if uc.allow_opt else None,
 
             d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
 
             *([
-            d(plan='robind', dist='/dev', src='/dev'),
-            d(plan='tmpfs',dist='/dev/shm'),
-            d(plan='robind', dist='/sys', src='/sys'),
+            d(plan='robind', dest='/dev', src='/dev'),
+            d(plan='tmpfs',dest='/dev/shm'),
+            d(plan='robind', dest='/sys', src='/sys'),
             ] if uc.see_real_hw else [] ),
 
-            d(plan='bind', dist=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
+            d(plan='bind', dest=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
 
             *([
-            d(plan='robind', dist=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
-            d(plan='robind', dist='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
+            d(plan='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(plan='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
             ] if uc.gui=='realX' else [] ),
 
-            d(plan='robind', src='/sbxdir/temp/X10', dist='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
+            d(plan='robind', src='/sbxdir/temp/X10', dest='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
 
             *([
-            d(plan='robind', dist=f'{si.HOME}/.fonts', SDS=1),
-            d(plan='robind', dist=f'{si.HOME}/.fonts.conf', SDS=1),
-            d(plan='robind', dist=f'{si.HOME}/.cache/fontconfig', SDS=1),
+            d(plan='robind', dest=f'{si.HOME}/.fonts', SDS=1),
+            d(plan='robind', dest=f'{si.HOME}/.fonts.conf', SDS=1),
+            d(plan='robind', dest=f'{si.HOME}/.cache/fontconfig', SDS=1),
             ] if uc.gui else [] ),
 
-            d(plan='rofile', dist=shutil.which("xdg-open"), distmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
-            *[d(plan='empty-if-exist', dist=path) for path in dyncfg.paths_to_mask],
+            d(plan='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
+            *[d(plan='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
 
-            d(plan='bind', dist='/tmp/dbus_session_socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
+            d(plan='bind', dest='/tmp/dbus_session_socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
 
-            d(plan='empty-if-exist', dist='/etc/fstab'),
-            d(plan='empty-if-exist', dist='/etc/systemd'),
-            d(plan='empty-if-exist', dist='/etc/init.d'),
-            d(plan='empty-if-exist', dist=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
-            d(plan='rofile', dist='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
+            d(plan='empty-if-exist', dest='/etc/fstab'),
+            d(plan='empty-if-exist', dest='/etc/systemd'),
+            d(plan='empty-if-exist', dest='/etc/init.d'),
+            d(plan='empty-if-exist', dest=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
+            d(plan='rofile', dest='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
 
             *([
-            d(plan='robind', dist=padir(rslvn('/etc/resolv.conf')), SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
+            d(plan='robind', dest=padir(rslvn('/etc/resolv.conf')), SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
             # nscd ...
             ] if uc.net.dns == 'real' else [] ),
+            d(plan='rofile', dest=rslvn('/etc/resolv.conf'), content=''.join([f'nameserver {ip}\n' for ip in uc.net.dns]) ) if isinstance(uc.net.dns, list) else None,
 
         ],
         envs_unset=[
@@ -230,13 +231,13 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
     for um in (uc.user_mnts or [] ):
         if um.mttype == 'appimage':
-            fs_user_mounts += [d(plan='appimg-mount', src=um.src, dist=f'/sbxdir/apps/{um.appname}')]
+            fs_user_mounts += [d(plan='appimg-mount', src=um.src, dest=f'/sbxdir/apps/{um.appname}')]
             start_sh_content = f'''#!/bin/bash
                 script=$(readlink -f "$0")
                 scriptpath=$(dirname "$script")
                 env APPDIR="$scriptpath/{um.appname}" "$scriptpath"/{um.appname}/AppRun "$@"
             '''
-            fs_user_mounts += [d(plan='rofile', dist=f'/sbxdir/apps/run_{um.appname}', distmode=0o555, content=start_sh_content)]
+            fs_user_mounts += [d(plan='rofile', dest=f'/sbxdir/apps/run_{um.appname}', destmode=0o555, content=start_sh_content)]
         elif um.mttype in ['bind', 'robind', 'same', 'rosame']:
             planItem = copy.deepcopy(um)
             del planItem.mttype
@@ -262,7 +263,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if uc.machineid == 'zero':
         machineid = '00000000000000000000000000000000'
 
-    fs_user_mounts += [d(plan='remountro', dist='/sbxdir/apps', flag=mntflag_apps)]
+    fs_user_mounts += [d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)]
 
     dyncfg = d({k: v for k, v in locals().items()
             if k in {'fs_user_mounts', 'paths_to_mask', 'machineid'}})
@@ -306,12 +307,12 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
 
     # 检查fs条目
     for fsItem in (cfg.fs or []):
-        if fsItem.dist:
-            fsItem.dist = napath(fsItem.dist)
+        if fsItem.dest:
+            fsItem.dest = napath(fsItem.dest)
         if fsItem.src:
             fsItem.src = napath(fsItem.src)
-        if fsItem.distbase:
-            fsItem.distbase = napath(fsItem.distbase)
+        if fsItem.destbase:
+            fsItem.destbase = napath(fsItem.destbase)
 
     if len(cfg.dropcap_then_cmds or [])>0 and not cfg.drop_caps:
         raise_exit(f"层{cfg.layer_name}设置了dropcap_then_cmds但没有启用drop_caps")
@@ -439,7 +440,7 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
         mount(None, target_sbxdir_path, None, MS.REMOUNT|MS.RDONLY|mntflag_newsbxdir, None)
 
    # build_fs 时原有：
-            # mount('tmpfs', f'{real_dist}/overlays', 'tmpfs', flag, None)
+            # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
 
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
@@ -531,7 +532,7 @@ def main():
     if not thislyr_cfg.newrootfs:
         thislyr_cfg.sbxdir_path1 = thislyr_cfg.sbxdir_path0
     else:
-        thislyr_cfg.sbxdir_path1 = next((pItem.dist for pItem in thislyr_cfg.fs if pItem.batch_plan == 'sbxdir-in-newrootfs'), None)
+        thislyr_cfg.sbxdir_path1 = next((pItem.dest for pItem in thislyr_cfg.fs if pItem.batch_plan == 'sbxdir-in-newrootfs'), None)
     # sbxdir_path 说明
     # 本层变根 前 后 的 sbxdir_path ( sbxdir_path0 sbxdir_path1)
     # 变根前 0 = 刚启动本层启动脚本时
@@ -798,43 +799,43 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
     for pItem in fsPlans:
         plan = pItem.plan
         src = pItem.src
-        dist = pItem.dist
-        real_dist = napath(f'{target_fs_path}/{dist}')
+        dest = pItem.dest
+        real_dest = napath(f'{target_fs_path}/{dest}')
         if plan in ['same', 'rosame', 'bind', 'robind'] :
             CHK( os.path.lexists(src) , f"来源{src}不存在")
             if plan in ['bind', 'robind'] :
                 src = rslvy(src)
             ro = True if plan in ['rosame', 'robind'] else False
             if Path(src).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
-                symlink(Path(src).readlink(), real_dist)
+                symlink(Path(src).readlink(), real_dest)
                 # TODO chroot 前后对symlink做一致性检查
             elif Path(src).is_dir(): # 文件夹
-                mkdirp(real_dist)
-                mount(src, real_dist, None, mntflag_binddir, None)
-                z(d(dirpath=real_dist, flag=mntflag_binddir )) if ro else None
+                mkdirp(real_dest)
+                mount(src, real_dest, None, mntflag_binddir, None)
+                z(d(dirpath=real_dest, flag=mntflag_binddir )) if ro else None
             elif (Path(src).is_file() \
                 or Path(src).is_char_device() \
                 or Path(src).is_block_device() ) :
                 # 普通文件可以这这样。猜测 字符设备、块设备 也可以当普通文件一样处理
-                make_file_exist(real_dist)
-                mount(src,  real_dist, None, MS.BIND, None)
-                mount(None, real_dist, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
+                make_file_exist(real_dest)
+                mount(src,  real_dest, None, MS.BIND, None)
+                mount(None, real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
             elif Path(src).is_socket(): # 已知socket不能remount成ro
-                make_file_exist(real_dist)
-                mount(src,  real_dist, None, MS.BIND|MS.RDONLY, None)
+                make_file_exist(real_dest)
+                mount(src,  real_dest, None, MS.BIND|MS.RDONLY, None)
             else:
                 raise_exit(f"原路径{src}所属文件类型暂未实现处理方式")
         elif plan in ['tmpfs', 'rotmpfs']:
             ro = True if plan == 'rotmpfs' else False
-            mkdirp(real_dist)
+            mkdirp(real_dest)
             flag = pItem.flag or mntflag_tmpfs
-            mount('tmpfs', real_dist, 'tmpfs', flag , None)
-            z(d(dirpath=real_dist, flag=flag)) if ro else None
+            mount('tmpfs', real_dest, 'tmpfs', flag , None)
+            z(d(dirpath=real_dest, flag=flag)) if ro else None
         elif plan == 'dir':
-            mkdirp(real_dist)
+            mkdirp(real_dest)
         elif plan == 'any-exist': #如果已存在，无论是文件/目录/软链都可以，不存在就建个空文件
-            if not os.path.lexists(real_dist):
-                make_file_exist(real_dist)
+            if not os.path.lexists(real_dest):
+                make_file_exist(real_dest)
         elif plan in ['file', 'rofile'] :
             # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
             # 记得永远不要写入目标文件，防止覆盖用户文件
@@ -842,40 +843,40 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             with tempfile.NamedTemporaryFile( dir=f'{thislyr_cfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(pItem.content)
                 os.chmod(f.name, 0o444) if ro else None
-                os.chmod(f.name, pItem.distmode) if pItem.distmode else None
-                make_file_exist(real_dist)
-                mount(f.name, real_dist, None, MS.BIND, None)
-                mount(None,   real_dist, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
+                os.chmod(f.name, pItem.destmode) if pItem.destmode else None
+                make_file_exist(real_dest)
+                mount(f.name, real_dest, None, MS.BIND, None)
+                mount(None,   real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
         elif plan == 'symlink':
-            symlink(pItem.linkto, real_dist)
+            symlink(pItem.linkto, real_dest)
             # TODO chroot 前后对symlink做一致性检查
         elif plan == 'empty-if-exist' :
-            if not os.path.lexists(real_dist):
+            if not os.path.lexists(real_dest):
                 continue
             optn='mode=0000'
-            if Path(real_dist).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
-                raise_exit(f"要保证为空的路径{real_dist}所属文件类型为symlink，暂未实现处理方式")
-            elif Path(real_dist).is_dir(): # 文件夹
-                mount('tmpfs', real_dist, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, optn)
-            elif Path(real_dist).is_char_device() or Path(real_dist).is_block_device(): # 设备文件
-                mount('/dev/null', real_dist,  None, MS.BIND|MS.RDONLY, optn)
-                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
+            if Path(real_dest).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
+                raise_exit(f"要保证为空的路径{real_dest}所属文件类型为symlink，暂未实现处理方式")
+            elif Path(real_dest).is_dir(): # 文件夹
+                mount('tmpfs', real_dest, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, optn)
+            elif Path(real_dest).is_char_device() or Path(real_dest).is_block_device(): # 设备文件
+                mount('/dev/null', real_dest,  None, MS.BIND|MS.RDONLY, optn)
+                mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
             else: # 普通文件、socket, fifo
-                mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dist,  None, MS.BIND|MS.RDONLY, optn)
-                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
+                mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
+                mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
         elif plan == 'sbxdir-in-newrootfs':
-            CHK(dist == '/sbxdir', "sbxdir-in-newrootfs的dist必须为/sbxdir")
+            CHK(dest == '/sbxdir', "sbxdir-in-newrootfs的dest必须为/sbxdir")
             make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_buildfs=True)
         elif plan == 'devpts':
-            mkdirp(real_dist)
-            mount('devpts', real_dist, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
+            mkdirp(real_dest)
+            mount('devpts', real_dest, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
         elif plan == 'appimg-mount':
-            mkdirp(real_dist)
+            mkdirp(real_dest)
             src = rslvy(src)
             offset = get_appimg_sqoffset(src)
-            run_cmd_fg(['squashfuse', '-o', f'ro,offset={offset}', src, real_dist])
+            run_cmd_fg(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
         elif plan == 'remountro':
-            z(d(dirpath=real_dist, flag=pItem.flag or 0))
+            z(d(dirpath=real_dest, flag=pItem.flag or 0))
         else:
             raise_exit(f"无法识别的fsPlan条目 {pItem}")
 
@@ -891,11 +892,11 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         batch_plan = pItem.batch_plan # 预设的多个plan的集合
         plan = pItem.plan # 一个plan
         if batch_plan == 'dup-rootfs': # 把前一个rootfs复制到子层。包含dev
-            distbase = pItem.distbase or '/'
+            destbase = pItem.destbase or '/'
             srcbase = pItem.srcbase or '/'
-            CHK( distbase in ['/', '/zrootfs'], "dup-rootfs要求distbase必须为'/'或'/zrootfs'")
+            CHK( destbase in ['/', '/zrootfs'], "dup-rootfs要求destbase必须为'/'或'/zrootfs'")
             CHK( srcbase in ['/', '/zrootfs'],  "dup-rootfs要求srcbase 必须为'/'或'/zrootfs'")
-            a( d( plan='rotmpfs', dist=distbase , flag=mntflag_newrootfs) ) if distbase != '/' else None
+            a( d( plan='rotmpfs', dest=destbase , flag=mntflag_newrootfs) ) if destbase != '/' else None
             for x in os.listdir(srcbase):
                 if x in [
                     'proc',
@@ -903,41 +904,41 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                     'zrootfs',
                 ]:
                     continue
-                a( d( plan='same', dist=napath(f'{distbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
-            a( d( plan='tmpfs', dist=napath(f'{distbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
+                a( d( plan='same', dest=napath(f'{destbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
+            a( d( plan='tmpfs', dest=napath(f'{destbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
         elif batch_plan == 'sbxdir-in-newrootfs':
             a( d({'plan': dict.pop(pItem, 'batch_plan'), **pItem} ) )
         elif batch_plan == 'basic-dev':
             # 最小 /dev 集合。把常用设备结点从宿主机 bind 进来；并为 shm 提供 tmpfs
-            a( d( plan='rotmpfs', dist='/dev' ) )
+            a( d( plan='rotmpfs', dest='/dev' ) )
             basic_devs = [ 'null', 'zero', 'full', 'urandom', 'random', 'tty', 'console', ]
             for dname in basic_devs:
-                a( d( plan='same', dist=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
-            a( d( plan='devpts',  dist='/dev/pts') )
-            a( d( plan='symlink', dist='/dev/ptmx', linkto='pts/ptmx' ) )
-            a( d( plan='symlink', dist='/dev/fd',     linkto='/proc/self/fd' ) )
-            a( d( plan='symlink', dist='/dev/stdin',  linkto='/proc/self/fd/0' ) )
-            a( d( plan='symlink', dist='/dev/stdout', linkto='/proc/self/fd/1' ) )
-            a( d( plan='symlink', dist='/dev/stderr', linkto='/proc/self/fd/2' ) )
-            a( d( plan='symlink', dist='/dev/core',   linkto='/proc/kcore' ) )
-            a( d( plan='tmpfs', dist='/dev/shm' ) )
+                a( d( plan='same', dest=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
+            a( d( plan='devpts',  dest='/dev/pts') )
+            a( d( plan='symlink', dest='/dev/ptmx', linkto='pts/ptmx' ) )
+            a( d( plan='symlink', dest='/dev/fd',     linkto='/proc/self/fd' ) )
+            a( d( plan='symlink', dest='/dev/stdin',  linkto='/proc/self/fd/0' ) )
+            a( d( plan='symlink', dest='/dev/stdout', linkto='/proc/self/fd/1' ) )
+            a( d( plan='symlink', dest='/dev/stderr', linkto='/proc/self/fd/2' ) )
+            a( d( plan='symlink', dest='/dev/core',   linkto='/proc/kcore' ) )
+            a( d( plan='tmpfs', dest='/dev/shm' ) )
         elif batch_plan == 'container-rootfs':
             # 只读挂载的重要系统路径
             paths_to_rosame = [ '/bin', '/sbin', '/usr', '/lib64', '/lib', '/etc',
                 '/var/lib/ca-certificates', '/var/lib/dbus', '/var/cache/fontconfig' , ]
             for p in paths_to_rosame:
-                a( d( plan='rosame', dist=p, src=p ) )
+                a( d( plan='rosame', dest=p, src=p ) )
             # 需要 tmpfs 的可写路径（容器内部用）
             paths_to_tmpfs = [ '/run', '/tmp', '/root', '/mnt',
                 '/var', '/var/lib', '/var/cache', f'/run/user/{si.uid}', '/run/user/0', '/run/lock',
                 '/run/tmux' , f'{si.HOME}' , f'{si.HOME}/.cache' ]
             for p in paths_to_tmpfs:
-                a( d( plan='tmpfs', dist=p ) )
-            a( d( plan='symlink', dist='/var/run', linkto='/run' ) )
-            a( d( plan='symlink', dist='/var/lock', linkto='/run/lock' ) )
+                a( d( plan='tmpfs', dest=p ) )
+            a( d( plan='symlink', dest='/var/run', linkto='/run' ) )
+            a( d( plan='symlink', dest='/var/lock', linkto='/run/lock' ) )
         elif batch_plan == 'mask-privacy':
-            distbase = pItem.distbase
-            CHK( distbase in ['/', '/zrootfs'], "mask-privacy要求distbase必须为'/'或'/zrootfs'")
+            destbase = pItem.destbase
+            CHK( destbase in ['/', '/zrootfs'], "mask-privacy要求destbase必须为'/'或'/zrootfs'")
             path_maskfile = f'{si.HOME}/.config/bblsandbox/paths_never_access.txt'
             maskfile = Path(path_maskfile)
             paths_to_mask = maskfile.read_text().splitlines() if maskfile.exists() else []
@@ -947,7 +948,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                 CHK( path.startswith('/'), "paths_never_access.txt中有不是以'/'的条目")
                 path = napath(path)
                 if os.path.lexists(path):
-                    a( d( plan='empty-if-exist', dist=napath(f'{distbase}/{path}' ) ) )
+                    a( d( plan='empty-if-exist', dest=napath(f'{destbase}/{path}' ) ) )
 
         # 下面是 plan 而不是 batch_plan 。因为它们两个不应同时有，所以用同一if树
         elif plan:
@@ -957,31 +958,31 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
 
     for pItem in fsPlans:
         if pItem.SDS:
-            if pItem.src and not pItem.dist:
-                pItem.dist = pItem.src
-            elif pItem.dist and not pItem.src:
-                pItem.src = pItem.dist
-            elif not pItem.src and not pItem.dist:
-                raise_exit(f"{pItem} 既无 src 也无 dist")
-            elif napath(pItem.src) != napath(pItem.dist):
-                raise_exit(f"{pItem}设置了SDS，但src与dist不一致")
+            if pItem.src and not pItem.dest:
+                pItem.dest = pItem.src
+            elif pItem.dest and not pItem.src:
+                pItem.src = pItem.dest
+            elif not pItem.src and not pItem.dest:
+                raise_exit(f"{pItem} 既无 src 也无 dest")
+            elif napath(pItem.src) != napath(pItem.dest):
+                raise_exit(f"{pItem}设置了SDS，但src与dest不一致")
             del pItem.SDS
     fsPlans = [d({'plan': dict.pop(pItem, 'plan'), **pItem}) for pItem in fsPlans]
 
-    # 查找移除重复的dist
-    def find_dup_dist():
-        used_dist = set()
+    # 查找移除重复的dest
+    def find_dup_dest():
+        used_dest = set()
         for i in reversed(range(0, len(fsPlans))):
             pItem = fsPlans[i]
-            if pItem.dist in used_dist:
-                log(f"因dist重复(={pItem.dist})，移除{pItem}")
+            if pItem.dest in used_dest:
+                log(f"因dest重复(={pItem.dest})，移除{pItem}")
                 fsPlans[i] = d(removed=True)
-            used_dist.add(pItem.dist)
-    find_dup_dist()
+            used_dest.add(pItem.dest)
+    find_dup_dest()
     fsPlans = [pItem for pItem in fsPlans if not pItem.removed]
 
     # 排序 fsPlans
-    fsPlans = sorted(fsPlans, key=lambda pItem: napath(pItem['dist']).split(os.sep) )
+    fsPlans = sorted(fsPlans, key=lambda pItem: napath(pItem['dest']).split(os.sep) )
     fsPlans = sorted(fsPlans, key=lambda x: 0 if (isinstance(x, dict) and x.get('plan') == 'sbxdir-in-newrootfs') else 1)
 
     # [log(pItem) for pItem in fsPlans] # debug
@@ -1244,11 +1245,11 @@ def make_file_exist(path): # 路径不能已有目录
         mkdirp(Path(path).parent)
         Path(path).touch()
 
-def symlink(linkto, dist):  # linkto：要创建的软链的指向 .  dist: 在哪个位置创建软链。
-    if Path(dist).is_symlink() and Path(dist).readlink() == linkto:
+def symlink(linkto, dest):  # linkto：要创建的软链的指向 .  dest: 在哪个位置创建软链。
+    if Path(dest).is_symlink() and Path(dest).readlink() == linkto:
         return
-    mkdirp(Path(dist).parent)
-    os.symlink(linkto, dist)
+    mkdirp(Path(dest).parent)
+    os.symlink(linkto, dest)
 
 def which_and_resolve_exist(cmd):
     path = shutil.which(cmd)
