@@ -371,6 +371,7 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
         mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, None)
 
     Path(f'{target_sbxdir_path}/empty').touch()
+    os.chmod(f'{target_sbxdir_path}/empty', 0)
 
     mkdirp(f'{target_sbxdir_path}/apps')
     if old_sbxdir_path :
@@ -390,14 +391,20 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
 
     mkdirp(f'{target_sbxdir_path}/cfg')
     if not os.path.exists(f'{target_sbxdir_path}/cfg/si.json'):
-        Path(f'{target_sbxdir_path}/cfg/si.json').write_text(json.dumps(si, indent=2, ensure_ascii=False))
+        with open(f'{target_sbxdir_path}/cfg/si.json', 'w') as f:
+            f.write(json.dumps(si, indent=2, ensure_ascii=False))
+            os.chmod(f.name, 0o444)
         safe_copy_script(f'{target_sbxdir_path}/cfg/bootsbx.py')
-        Path(f'{target_sbxdir_path}/cfg/sbx.{si.sandbox_name}.name').write_text(si.sandbox_name)
+        with open(f'{target_sbxdir_path}/cfg/sbx.{si.sandbox_name}.name', 'w') as f:
+            f.write(si.sandbox_name)
+            os.chmod(f.name, 0o444)
         os.symlink(f'sbx.{si.sandbox_name}.name', f'{target_sbxdir_path}/cfg/sbx.name')
 
     # 创建和写 (不包括本层)所有子层（递归） 需要的 路径和文件
     def create_lyrs_files_recr(lyr_cfg):
-        Path(f'{target_sbxdir_path}/cfg/lyr_cfg.{lyr_cfg.layer_name}.json').write_text(json.dumps(lyr_cfg, indent=2, ensure_ascii=False))
+        with open(f'{target_sbxdir_path}/cfg/lyr_cfg.{lyr_cfg.layer_name}.json', 'w') as f:
+            f.write(json.dumps(lyr_cfg, indent=2, ensure_ascii=False))
+            os.chmod(f.name, 0o444)
         if lyr_cfg.newrootfs:
             mkdirp(f'{target_sbxdir_path}/new.{lyr_cfg.layer_name}.rootfs')
         for sublyr_cfg in (lyr_cfg.sublayers or [] ) :
@@ -407,9 +414,13 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
 
     # 判断是最外层 才把 本层配置（即第1层） 和 userconfig 写入
     if call_at_begin and thislyr_cfg.depth==1:
-        Path(f'{target_sbxdir_path}/cfg/lyr_cfg.{thislyr_cfg.layer_name}.json').write_text(json.dumps(thislyr_cfg, indent=2, ensure_ascii=False) )
+        with open(f'{target_sbxdir_path}/cfg/lyr_cfg.{thislyr_cfg.layer_name}.json', 'w') as f:
+            f.write(json.dumps(thislyr_cfg, indent=2, ensure_ascii=False) )
+            os.chmod(f.name, 0o444)
+
 
     if new_tmpfs_for_sbxdir:
+        os.chmod(target_sbxdir_path, 0o555)
         mount(None, target_sbxdir_path, None, MS.REMOUNT|MS.RDONLY|mntflag_newsbxdir, None)
 
    # build_fs 时原有：
@@ -456,8 +467,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     os.chdir(outest_sbxdir)
     print(f'沙箱启动PID: {outest_pid}')
 
-    Path(f'{outest_sbxdir}/cfg/userconfig.json').write_text(json.dumps(uc, indent=2, ensure_ascii=False))
-    Path(f'{outest_sbxdir}/cfg/sbx.{outest_pid}.pid').write_text(str(outest_pid))
+    with open(f'{outest_sbxdir}/cfg/userconfig.json', 'w') as f:
+        f.write(json.dumps(uc, indent=2, ensure_ascii=False))
+        os.chmod(f.name, 0o444)
+    with open(f'{outest_sbxdir}/cfg/sbx.{outest_pid}.pid', 'w') as f:
+        f.write(str(outest_pid))
+        os.chmod(f.name, 0o444)
     os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/cfg/sbx.pid')
 
     sbxinfo.pythonbin = sys.executable
@@ -584,6 +599,7 @@ def run_in_forked(si, thislyr_cfg):
         os.chdir('/')
         umount('/oldroot', MNT.DETACH)
         os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
+        os.chmod('/', 0o555)
         mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
     del thislyr_cfg.newrootfs_path
     del thislyr_cfg.sbxdir_path0
@@ -726,11 +742,11 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             ro = True if plan == 'rofile' else False
             with tempfile.NamedTemporaryFile( dir=f'{thislyr_cfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(pItem.content)
+                os.chmod(f.name, 0o444) if ro else None
+                os.chmod(f.name, pItem.distmode) if pItem.distmode else None
                 make_file_exist(real_dist)
                 mount(f.name, real_dist, None, MS.BIND, None)
                 mount(None,   real_dist, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
-                os.chmod(f.name, pItem.distmode) if pItem.distmode else None
-                # NOTE ?? 但 chmod 应在写入前或写入完成后做，且绑定后权限不一定反映在目标。通常先创建临时文件、chmod，然后 bind mount。 ??
         elif plan == 'symlink':
             symlink(pItem.linkto, real_dist)
             # TODO chroot 前后对symlink做一致性检查
@@ -909,6 +925,7 @@ def safe_copy_script(copy_target_path):
     for i, line in enumerate(lines_arr):
         if line.startswith(removed_mark):
             make_file_exist(copy_target_path)
+            os.chmod(copy_target_path, 0o444)
             mount(scriptfilepath, copy_target_path, None, MS.BIND|MS.RDONLY, None)
             mount(None, copy_target_path, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
             return
@@ -931,6 +948,7 @@ def safe_copy_script(copy_target_path):
         lines_arr[i] = ""
     script_content_safe = '\n'.join(lines_arr)
     Path(copy_target_path).write_text(script_content_safe)
+    os.chmod(copy_target_path, 0o444)
 
 
 
