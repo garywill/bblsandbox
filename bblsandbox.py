@@ -4,11 +4,8 @@
 # Licensed under GPL
 # https://github.com/garywill/bblsandbox
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio
-from types import SimpleNamespace
-from datetime import datetime
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, glob , datetime , types
 from pathlib import Path
-from glob import glob
 
 # === HIDE_FOR_SUBLAYERS BEGIN === NOTE: Don't change this line ===
 # 普通用户设置这里
@@ -472,7 +469,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
     print(f"沙箱名：{sandbox_name}")
 
-    starttime_str = datetime.now().strftime("%m%d-%H%M")
+    starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
 
     n = 0
     while os.path.lexists( (outest_sbxdir := f'{PTMP}/{sandbox_name}_{starttime_str}-{n}') ):
@@ -1031,7 +1028,7 @@ def cleanup(si):
         f'{si.outest_sbxdir}/cfg',
         f'{si.outest_sbxdir}/temp',
         f'{si.outest_sbxdir}/apps',
-        *glob(f'{si.outest_sbxdir}/new.*.rootfs'),
+        *glob.glob(f'{si.outest_sbxdir}/new.*.rootfs'),
         f'{si.outest_sbxdir}',
     ]
     for dirpath in paths_rm_sub_files:
@@ -1050,7 +1047,7 @@ def cleanup(si):
 #======= libc 工具函数 =========================
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
-MS = SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
+MS = types.SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
 def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
     allowed_nonabs = ['tmpfs', 'proc', 'devpts']
     if not ( (source is None) or (source in allowed_nonabs) or (source.startswith('/')) ):
@@ -1075,7 +1072,7 @@ def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs�
         errno = ctypes.get_errno()
         raise OSError(errno, os.strerror(errno), target)
 
-MNT=SimpleNamespace(FORCE=1, DETACH=2, EXPIRE=4, NOFOLLOW=8) # 缷载（umount2)可能用到的常数
+MNT = types.SimpleNamespace(FORCE=1, DETACH=2, EXPIRE=4, NOFOLLOW=8) # 缷载（umount2)可能用到的常数
 def umount(target, flags=0):
     ret = libc.umount2(
         target.encode(),
