@@ -84,12 +84,17 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                 ],
                 sublayers = [
                     d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
-                        layer_name='layer2a',
+                        layer_name='layer2a', unshare_pid=True, unshare_mnt=True,
                         unshare_chdir=True, # chdir()不影响其他
 
                         # uid 变回 1000
                         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
 
+                        newrootfs=True,
+                        fs=[
+                            d(batch_plan='dup-rootfs', distbase='/'),
+                            d(batch_plan='sbxdir-in-newrootfs', dist='/sbxdir'),
+                        ],
                         dropcap_then_cmds=[
                             d(
                                 cmdlist=["Xephyr",  ":10",  "-resizeable",  "-ac"] ,
@@ -275,6 +280,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     cfg.depth = parent_cfg.depth + 1 if parent_cfg is not None else 1
 
     CHK( cfg.layer_name, "存在某层没有设置layer_name")
+    CHK( re.match(r'^[a-zA-Z0-9_-]+$', cfg.layer_name), f"layer_name只能有字母、数字、杠、下划线。此名称不合法： {cfg.layer_name}" )
 
     CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
     used_layer_names.append(cfg.layer_name)
@@ -339,10 +345,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
             raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
 
-    if cfg.layer_name == 'layer2a':
-        CHK( cfg.drop_caps, f"{cfg.layer_name}未启用drop_caps=True（要求启用）")
-
-    if cfg.layer_name in ['layer4a', 'layer4']:
+    if cfg.layer_name in ['layer2a', 'layer4a', 'layer4']:
         CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
         CHK( cfg.drop_caps, f"{cfg.layer_name}未启用drop_caps=True（要求启用）")
 
@@ -466,7 +469,9 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     uc = userconfig(sbxinfo) # 用户配置别名
 
     # 沙箱名。不是子容器层名
+    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"容器名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
+    sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     print(f"沙箱名：{sandbox_name}")
 
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
