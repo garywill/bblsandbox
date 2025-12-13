@@ -19,7 +19,7 @@ def userconfig(si): # 这个只在顶层解析一次
         # 若不设置 homedir ，则会用 tmpfs 当 $HOME
         # homedir=f'{si.startdir_on_host}/fakehome',
 
-        mask_xdg_opens=True, # 容器内部不能使用xdg-open, firefox, chromium 等
+        net='real', # 使用真实的网络介面和真实的/etc/resolv.conf所指向的目录
 
         # 若不设置gui则内部无任何X11
         gui="realX", # 使用真实的 X11
@@ -39,6 +39,11 @@ def userconfig(si): # 这个只在顶层解析一次
         # dbus_session="filter", # (暂未实现)
 
         # tmux_listen=True, #（暂未实现）
+
+        # allow_opt=True, # 允许访问真实/opt
+        mask_xdg_opens=True, # 容器内部不能使用xdg-open, firefox, chromium 等
+        # mask_osrelease=True, # 不可访问/etc/os-release
+        # machineid='zero', # 把/etc/machine-id填0
     )
     return uc
 
@@ -126,7 +131,8 @@ def gen_layer3(si, uc, dyncfg):
         unshare_ipc=True,
         unshare_time=True,
         unshare_uts=True,
-        # unshare_net=True,
+
+        unshare_net=True if uc.net != 'real' else False,
 
         newrootfs=True, # 有newrootfs则必须有fs
         fs=[ # fs全称fs_plans_for_new_rootfs 。
@@ -137,7 +143,7 @@ def gen_layer3(si, uc, dyncfg):
             *dyncfg.fs_user_mounts,
             # ---- 以上是不变条目 ----
 
-            d(plan='robind', dist='/opt', src='/opt'),
+            d(plan='robind', dist='/opt', src='/opt') if uc.allow_opt else None,
             # TODO overlay /etc
 
             d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
@@ -167,6 +173,18 @@ def gen_layer3(si, uc, dyncfg):
             *[d(plan='empty-if-exist', dist=path) for path in dyncfg.paths_to_mask],
 
             d(plan='bind', dist='/tmp/dbus_session_socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
+
+            d(plan='empty-if-exist', dist='/etc/fstab'),
+            d(plan='empty-if-exist', dist='/etc/systemd'),
+            d(plan='empty-if-exist', dist='/etc/init.d'),
+            d(plan='empty-if-exist', dist=Path('/etc/os-release').resolve(strict=False) ) if uc.mask_osrelease else None,
+            d(plan='rofile', dist='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
+
+            *([
+            d(plan='robind', dist=Path('/etc/resolv.conf').resolve(strict=False).parent, SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
+            # nscd ...
+            ] if uc.net == 'real' else [] )
+
         ],
         envs_unset=[
             "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK", "ICEAUTHORITY", "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS", "XDG_CACHE_HOME",
@@ -195,9 +213,9 @@ def gen_layer3(si, uc, dyncfg):
     return layer3
 
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
-    dyncfg = d()
-
     fs_user_mounts = []
+
+    cmds_to_mask = []
     paths_to_mask = []
 
     for um in (uc.user_mnts or [] ):
@@ -215,7 +233,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             planItem.plan = um.mttype
             fs_user_mounts += [planItem]
 
-    cmds_to_mask = []
+
     if uc.mask_xdg_opens:
         cmds_to_mask += [
             "firefox", "firefox-esr", "seamonkey", "icecat",
@@ -229,12 +247,15 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             "lynx", "w3m", "links", "elinks", "browsh",
             "dillo", "qutebrowser", "midori", "otter-browser", "xombrero", "luakit", "dooble", "netsurf", "nyxt", "iridium", "surf"
         ]
-        paths_to_mask += [ path for cmd in cmds_to_mask if (path := which_and_resolve_exist(cmd)) is not None ]
+    paths_to_mask += [ path for cmd in cmds_to_mask if (path := which_and_resolve_exist(cmd)) is not None ]
+
+    if uc.machineid == 'zero':
+        machineid = '00000000000000000000000000000000'
 
     fs_user_mounts += [d(plan='remountro', dist='/sbxdir/apps', flag=mntflag_apps)]
 
-    dyncfg.fs_user_mounts = fs_user_mounts
-    dyncfg.paths_to_mask = paths_to_mask
+    dyncfg = d({k: v for k, v in locals().items()
+            if k in {'fs_user_mounts', 'paths_to_mask', 'machineid'}})
     return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
