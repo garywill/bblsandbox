@@ -2,42 +2,44 @@ English | [中文](README_zh.md)
 
 # Box-in-box Linux Sandbox
 
-A fully customizable, endlessly-nestable Linux sandbox. Box-in-box Linux (BBL).
+A Linux sandbox tool that allows unlimited nesting. (**BBL**, short for Box-in-box Linux).
 
 > Early-stage project — free to try and read the code. Note: runtime strings and code comments are currently not in English.
 
 ## Overview
 
-- No install. Minimal dependencies. Single-file Python script. Copy as you like, tweak options and run.
+- You can run "untrusted" and "semi-trusted" apps in different layers of one sandbox. Every layer's isolation degree is configurable.
 
-- No root needed. No background daemon. No host cap/suid needed.
+- Arbitrary nesting. Unlike other tools, this tool focus on a smooth sub-namespace nesting experience. You can create a tree of layer-on-layer containers as you like
+
+- Single-file script. Copy as you like, edit options at file head and run. No install. Minimal dependencies.
+
+- Python script although it is, no dependencies on third-party libs. It uses libc to talk to Linux kernel
+
+- No root needed. No daemon. No host cap/suid needed.
 
 - No intentional traces in home or disk. Temp data in `/tmp` deleted automatically
 
 - PID namespace covers children — easy to kill whole sandbox tree.
 
-- Fine-grained control options. Every layer fully customizable.
-
-- Multi-layer namespaces. Run "untrusted" and "semi-trusted" apps in different layers. Nest arbitrarily.
-
 - Image-free: no container images to download like Docker/LXC. Reuse the host system’s files so tools such as vim or git don’t need to be reinstalled; user data and other paths are isolated.
 
 ## Why made this? What about its security?
 
-Small personal Firejail-ish experiment. Firejail/Bubblewrap and even `unshare` don't expose some low-level knobs I wanted. I built this to learn about kernel namespaces, permissions, and to provide very fine-grained control — including nesting to arbitrary depth — for scenarios other tools don’t cover.
+I call it a Firejail alternative. Firejail/Bubblewrap and even official tool `unshare` don't expose some low-level knobs I want. So I built this fully controllable tool. Nesting to arbitrary depth is out main feature, which other tools don't provide.
 
 Early-stage. It works and you can read the code, but it has not been developed or audited by a security team.
 
 ## Features and Implementation Status
 
-- [x] No root needed. No background daemon. No host cap/suid needed.
+- [x] No root needed. No daemon. No host cap/suid needed.
 - [x] Fully customizable nested namespaces
     - [x] Per-layer PID/mount ... ns controls
     - [x] Per-layer new rootfs and fine-grained control over filesystem path setup
-        - [x] rw mounts
-        - [x] ro mounts
+        - [x] Bind mount (rw/ro)
         - [ ] overlay 
         - [x] Creation or temporary override of files (rw/ro); tmpfs directories (rw/ro)
+        - [x] symlink
     - [x] Environment variable control inside the sandbox
     - [x] UID -> 0 in some layers, back to user in others; drop caps; no_new_privs
 - [x] AppImage mount support
@@ -66,7 +68,8 @@ Required:
 
 Optional (for extra features):
 
-- squashfuse, Xephyr
+- squashfuse (mount AppImage)
+- Xephyr (isolated X11)
 
 ## Simple usage examples
 
@@ -147,25 +150,25 @@ BBL is a multi-layer, nestable sandbox. The script ships with a default nested t
 ```
 Linux Host 
   |
- layer1 (management-purpose layer; PID isolation; start inner privilege)
+ layer1 (management layer; PID isolation; start internal privilege)
   |
  layer2 (semi-trusted zone: mount ns isolation; user global privacy paths masked)
    |
-   |--layer2a (drop privilege; for trusted companion programs like an xpra client or dbus proxy)
+   |--layer2a (drop caps; for trusted companion programs, like xpra client / dbus proxy)
    |
- layer2h (handover)
+ layer2h (intermediary)
     |
   layer3 (untrusted zone: isolates most namespaces; sees system base paths; only data paths explicitly mounted by user are visible)
     |
-    |--layer4 (drop privilege; where user apps run)
-    |--layer4a (drop privilege; for untrusted companion programs such as an xpra server)
+    |--layer4 (drop caps; where user apps run)
+    |--layer4a (drop caps; for untrusted companion programs, such as xpra server)
 ```
 
-(layer2a and layer4a are both for companion programs. layer2a can access the real X11, DBus, and host filesystem; layer4a is intended for companions that do not need those host interfaces).
+(layer2a and layer4a are both for companion programs. layer2a can access real X11, real DBus, and host filesystem, while layer4a doesn't need to access them).
 
-Normal users do not need to edit the default template — only tweak the user options section.
+**Normal users do not need to edit the default template — only tweak the user options section.**
 
-When the sandbox is started, an interactive user shell (if requested) will usually run inside layer4.
+When the sandbox is started, user app or an interactive user shell (if requested) will usually run at layer4.
 
 > This project is early-stage and the design may change.
 

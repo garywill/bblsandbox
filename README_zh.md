@@ -1,10 +1,16 @@
 # Box-in-box Linux Sandbox
 
-可完全自定义、可无限嵌套的Linux沙箱。Box-in-box Linux （下文简称BBL）。
+可无限嵌套的Linux沙箱。Box-in-box Linux Sandbox 下文简称 **BBL**。
 
 ## 基本特性
 
-- 免安装、精简依赖。单文件Python脚本，随处复制，依使用需求修改选项
+- “不信任app”与“半信任app”可在一个沙箱的不同层运行，可控制每层隔离程度
+
+- 可无限嵌套。与其他不同，本工具设计成可以层层嵌套创建许多子namespace。你可以配置出想要的容器树
+
+- 单文件脚本，随处复制，依使用需求修改头部选项。免安装，精简依赖
+
+- 虽然是Python脚本，但直接通过libc调用内核功能，不需第三方Python库
 
 - 不需root；不需守护进程；不需任何主机的Cap或suid
 
@@ -12,15 +18,11 @@
 
 - PID NS 统领所有子进程，便于一键杀死不遗漏
 
-- 完全自定义，通过选项控制各个实现细节
-
-- 多层namespace任意配置，控制每层隔离程度。“不信任app”与“半信任app”可在一个沙箱不同层运行，且可以做到无限嵌套
-
 - 无镜像容器。不需要像Docker、LXC那样下载系统镜像。用现有真实系统作为基础，内部vim、git等工具无需重复安装，隔离其余用户数据和文件
 
 ## 为什么创建这个脚本？它安全性如何？
 
-我暂时把它称为个人的Firejail实验替代品。Firejail、Bubblewrap等工具不让用户做完全精细化的控制，就连官方工具unshare也是。为了学习内核的namespace、权限等机制，也为了实现完全自定义，以及其他工具做不到的的沙箱无限嵌套。
+我暂时把它称为Firejail替代品。Bubblewrap等工具我也用过，它们不让用户控制每一个细节，就连官方工具unshare也是，因此自己做一个完全可控的。主攻其他工具不支持的沙箱多层namespace无限嵌套。
 
 这个目前是非常早期的阶段，可以使用，但要知道，这个脚本目前无专业团队参与。
 
@@ -30,10 +32,10 @@
 - [x] 可完全自定义的多层嵌套namespace
     - [x] 每层pid ns、mount ns 等 每种namespace的隔离选项控制
     - [x] 每层的新rootfs挂载与细粒度文件系统路径建立方式控制
-        - [x] rw挂载
-        - [x] ro挂载
+        - [x] bind挂载(rw/ro)
         - [ ] overlay
         - [x] 创建或临时覆盖文件及其内容(rw/ro)；tmpfs目录(rw/ro)
+        - [x] symlink
     - [x] 内部环境变量控制
     - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPriv
 - [x] 可挂载AppImage
@@ -44,7 +46,7 @@
     - [ ] 可选暴露wayland接口
     - [ ] 可选Xephyr/Xvfb/x11vnc窗口内运行的隔离的完整桌面环境
 - [ ] 可选暴露真实物理硬件，或仅显卡渲染所需部分
-- DBUS
+- DBus
     - [x] 可选暴露真实dbus session接口
     - [ ] 可选过滤dbus通信
 - [ ] 每层子容器shell接口暴露给主机
@@ -62,7 +64,8 @@
 
 可选：
 
-- squashfuse, Xephyr
+- squashfuse (AppImage挂载)
+- Xephyr (隔离X11)
 
 ## 简单用例 
 
@@ -149,7 +152,6 @@ Linux Host
   |
  layer1 (用于统一管理；隔离pid ns；内部提权)
   |
-  |
  layer2 (半信任空间：隔离mount ns；屏蔽用户设置的全局屏蔽路径）
    |
    |--layer2a (降权；用于运行信任的辅助程序，如 xpra client、dbus-proxy ...）
@@ -159,15 +161,15 @@ Linux Host
   layer3 (不信任空间：隔离所有ns；
     |       可见系统基础目录，其余仅用户挂载进去的路径可见）
     |
-    |--layer4 (降权；用于运行app)
+    |--layer4 (降权；用于运行用户的App)
     |--layer4a (降权；用于运行不信任的辅助程序，如 xpra server ...)
 ```
 
 （layer2a和layer4a都用于运行辅助程序，区别在于layer2a可以访问真实的X11接口、dbus接口、真实硬盘文件，而layer4a则不需要访问这些）
 
-以上这个默认的嵌套模板普通用户不需要修改，只需要修改用户选项部分即可。
+**以上这个默认的嵌套模板普通用户不需要修改，只需要修改用户选项部分**即可。
 
-沙箱成功启动后，用户获得的 user shell （如果要） 是在layer4内。
+沙箱成功启动后，用户获得的 user shell （如果要） ，或所运行的App，是在layer4内。
 
 > 本项目处于早期阶段，不排除以后有修改设计的可能性
 
