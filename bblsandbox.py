@@ -19,8 +19,6 @@ def userconfig(si): # 这个只在顶层解析一次
         # 若不设置 homedir ，则会用 tmpfs 当 $HOME
         # homedir=f'{si.startdir_on_host}/fakehome',
 
-        net='real', # 使用真实的网络介面和真实的/etc/resolv.conf所指向的目录
-
         # 若不设置gui则内部无任何X11
         gui="realX", # 使用真实的 X11
         # gui="xephyr",
@@ -37,6 +35,11 @@ def userconfig(si): # 这个只在顶层解析一次
         # 输入法等通信需要dbus
         dbus_session="allow",
         # dbus_session="filter", # (暂未实现)
+
+        net=d(
+            iface='real', # 使用真实的网络介面
+            dns='real', #真实的/etc/resolv.conf所指向的目录
+        ),
 
         # tmux_listen=True, #（暂未实现）
 
@@ -132,7 +135,7 @@ def gen_layer3(si, uc, dyncfg):
         unshare_time=True,
         unshare_uts=True,
 
-        unshare_net=True if uc.net != 'real' else False,
+        unshare_net=True if uc.net.iface != 'real' else False,
 
         newrootfs=True, # 有newrootfs则必须有fs
         fs=[ # fs全称fs_plans_for_new_rootfs 。
@@ -183,7 +186,7 @@ def gen_layer3(si, uc, dyncfg):
             *([
             d(plan='robind', dist=padir(resolve('/etc/resolv.conf')), SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
             # nscd ...
-            ] if uc.net == 'real' else [] )
+            ] if uc.net.dns == 'real' else [] ),
 
         ],
         envs_unset=[
