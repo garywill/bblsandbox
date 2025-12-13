@@ -756,16 +756,17 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         elif plan == 'empty-if-exist' :
             if not os.path.lexists(real_dist):
                 continue
+            optn='mode=0000'
             if Path(real_dist).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 raise_exit(f"要保证为空的路径{real_dist}所属文件类型为symlink，暂未实现处理方式")
             elif Path(real_dist).is_dir(): # 文件夹
-                mount('tmpfs', real_dist, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, 'mode=0000,uid=0,gid=0')
+                mount('tmpfs', real_dist, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, optn)
             elif Path(real_dist).is_char_device() or Path(real_dist).is_block_device(): # 设备文件
-                mount('/dev/null', real_dist,  None, MS.BIND|MS.RDONLY, None)
-                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
+                mount('/dev/null', real_dist,  None, MS.BIND|MS.RDONLY, optn)
+                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
             else: # 普通文件、socket, fifo
-                mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dist,  None, MS.BIND|MS.RDONLY, None)
-                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
+                mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dist,  None, MS.BIND|MS.RDONLY, optn)
+                mount(None, real_dist,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
         elif plan == 'sbxdir-in-newrootfs':
             CHK(dist == '/sbxdir', "sbxdir-in-newrootfs的dist必须为/sbxdir")
             make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_buildfs=True)

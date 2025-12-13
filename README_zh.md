@@ -37,7 +37,7 @@
         - [x] 创建或临时覆盖文件及其内容(rw/ro)；tmpfs目录(rw/ro)
         - [x] symlink
     - [x] 内部环境变量控制
-    - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPriv
+    - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPrivs
 - [x] 可挂载AppImage
 - 沙箱内使用GUI
     - [x] 可选暴露真实X11接口

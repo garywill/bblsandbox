@@ -41,7 +41,7 @@ Early-stage. It works and you can read the code, but it has not been developed o
         - [x] Creation or temporary override of files (rw/ro); tmpfs directories (rw/ro)
         - [x] symlink
     - [x] Environment variable control inside the sandbox
-    - [x] UID -> 0 in some layers, back to user in others; drop caps; no_new_privs
+    - [x] UID=0 in layer1, back to uid=1000 in last layer; drop caps; no_new_privs
 - [x] AppImage mount support
 - GUI:
     - [x] Optionally expose the host X11 connection
