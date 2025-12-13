@@ -177,11 +177,11 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='empty-if-exist', dist='/etc/fstab'),
             d(plan='empty-if-exist', dist='/etc/systemd'),
             d(plan='empty-if-exist', dist='/etc/init.d'),
-            d(plan='empty-if-exist', dist=Path('/etc/os-release').resolve(strict=False) ) if uc.mask_osrelease else None,
+            d(plan='empty-if-exist', dist=resolve('/etc/os-release')) if uc.mask_osrelease else None,
             d(plan='rofile', dist='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
 
             *([
-            d(plan='robind', dist=Path('/etc/resolv.conf').resolve(strict=False).parent, SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
+            d(plan='robind', dist=padir(resolve('/etc/resolv.conf')), SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
             # nscd ...
             ] if uc.net == 'real' else [] )
 
@@ -688,7 +688,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         if plan in ['same', 'rosame', 'bind', 'robind'] :
             CHK( os.path.lexists(src) , f"来源{src}不存在")
             if plan in ['bind', 'robind'] :
-                src = str(Path(src).resolve())
+                src = resolve(src, strict=True)
             ro = True if plan in ['rosame', 'robind'] else False
             if Path(src).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 symlink(Path(src).readlink(), real_dist)
@@ -755,7 +755,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             mount('devpts', real_dist, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
         elif plan == 'appimg-mount':
             mkdirp(real_dist)
-            src = str(Path(src).resolve())
+            src = resolve(src, strict=True)
             offset = get_appimg_sqoffset(src)
             run_cmd_fg(['squashfuse', '-o', f'ro,offset={offset}', src, real_dist])
         elif plan == 'remountro':
@@ -964,12 +964,12 @@ def cleanup(si):
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
 MS = SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
-def mount(source, target, fstype, flags, data): # source可能空， target一定有
-    source = napath(source) if source else None
+def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
+    source = napath(source) if source and source.startswith('/') else None
     target = napath(target)
-    if source and str(Path(source).resolve()) != source:
+    if source and source.startswith('/') and resolve(source, strict=True) != source:
         raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
-    if str(Path(target).resolve()) != target:
+    if resolve(target, strict=True) != target:
         raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
     ret = libc.mount(
         source.encode() if source else None,
@@ -1130,9 +1130,17 @@ def which_and_resolve_exist(cmd):
     if not path:
         return None
     try:
-        return str(Path(path).resolve(strict=True))
+        return resolve(path, strict=True)
     except FileNotFoundError:
         return None
+
+def resolve(path, strict=False):
+    return str(Path(path).resolve(strict=strict))
+
+def padir(path):
+    if napath(path) == '/':
+        raise_exit(f"{path}已是根路径，无法再取得上级目录")
+    return str(Path(path).parent)
 
 def run_cmd_fg(cmds_list):
     prc = subprocess.Popen(cmds_list,
