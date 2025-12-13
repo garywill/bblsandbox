@@ -568,7 +568,7 @@ def main():
         if not is_outest:
             sys.exit()
 
-        atexit.register(lambda: cleanup(si) ) # 顶层父进程注册清理函数
+        atexit.register(lambda: cleanup_outest(si) ) # 顶层父进程注册清理函数
 
         set_ps1(si, thislyr_cfg, 'PaAfterFork')
 
@@ -651,19 +651,9 @@ def main2(si, thislyr_cfg):
     #   处理各种SIGNAL
     if thislyr_cfg.unshare_pid:
         CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-        for sig in EXIT_SIGNALS:
-            signal.signal(sig, handle_exit_signals)
-
-        def sigchld_handler(signum, frame): #回收僵尸进程
-            while True:
-                try:
-                    # -1 表示等待任意子进程 # os.WNOHANG 表示非阻塞：如果没有可回收的子进程，立即返回 (0, 0)
-                    pid, status = os.waitpid(-1, os.WNOHANG)
-                    if pid == 0:
-                        break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
-                except ChildProcessError:
-                    break
-        signal.signal(signal.SIGCHLD, sigchld_handler)
+        atexit.register(cleanup_pidnsleader)
+        for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
+            signal.signal(sig, signals_handler)
 
     if thislyr_cfg.user_shell:
         prc = subprocess.run(['/bin/bash', '--norc' ],
@@ -706,31 +696,69 @@ def main2(si, thislyr_cfg):
     #   如果有子进程，则等待，否则就退出
     if thislyr_cfg.unshare_pid:
         CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-        def exist_other_procs():
-            for entry in os.listdir('/proc'):
-                if entry.isdigit() and int(entry) != os.getpid():
-                    return True
-            return False
-        async def wait_for_all_children():
+        async def loop():
             while True:
                 await asyncio.sleep(0.3)
-                if not exist_other_procs():
-                    await asyncio.sleep(0.1)
-                    if not exist_other_procs():
-                        await asyncio.sleep(0.1)
-                        if not exist_other_procs():
-                            sys.exit()
-        asyncio.run(wait_for_all_children())
+                if not exist_childtree():
+                    print("子进程树已空，退出")
+                    sys.exit()
+                if should_exit:
+                    print(f"因信号 {signal.Signals(should_exit_signum).name} (={should_exit_signum}) ，即将退出")
+                    sys.exit()
+        asyncio.run(loop())
 
-EXIT_SIGNALS = [ signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGILL, signal.SIGTRAP, signal.SIGABRT, signal.SIGBUS, signal.SIGFPE, signal.SIGUSR1, signal.SIGSEGV, signal.SIGUSR2, signal.SIGPIPE, signal.SIGALRM, signal.SIGTERM, signal.SIGXCPU, signal.SIGXFSZ, signal.SIGVTALRM, signal.SIGPROF, signal.SIGIO, signal.SIGSYS, ]
-def handle_exit_signals(*args):
-    signal_num = args[0] if len(args)>0 else None
-    if signal_num:
-        print(f"收到要退出的信号 {signal.Signals(signal_num).name} (={signal_num})")
+def cleanup_pidnsleader():
     if os.getpid() == 1:
-        os.kill(-1, signal.SIGTERM)
-        time.sleep(0.2)
-    sys.exit()
+        for i in range(10):
+            if not exist_childtree():
+                break
+            os.kill(-1, signal.SIGTERM)
+            time.sleep(0.1)
+
+
+# NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 不一定要退出，由用户配置决定是否
+EXIT_SIGNALS = [ signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, signal.SIGUSR2, ]
+should_exit = False
+should_exit_signum = None
+def signals_handler(signum, frame):
+    # NOTE 不能print 不能sleep 不能sys.exit 只能 os._exit
+    global should_exit, should_exit_signum
+    if signum in EXIT_SIGNALS:
+        should_exit = True
+        should_exit_signum = signum
+    elif signum == signal.SIGCHLD:
+        while True:
+            try:
+                # -1 表示等待任意子进程 # os.WNOHANG 表示非阻塞：如果没有可回收的子进程，立即返回 (0, 0)
+                pid, status = os.waitpid(-1, os.WNOHANG)
+                if pid == 0:
+                    break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
+            except ChildProcessError:
+                should_exit = True
+                should_exit_signum = signal.SIGCHLD
+                os._exit(0)
+                break
+
+
+def exist_childtree():
+    try:
+        pid, status = os.waitpid(-1, os.WNOHANG)
+        return True
+    except ChildProcessError:
+        return False
+
+# os.waitpid(-1, os.WNOHANG) 的结果说明：
+#     (child_pid, exit_status)	成功回收一个僵尸进程
+#     (0, 0)	无僵尸可回收，但子进程仍存在
+#     抛出 ChildProcessError（继承自 OSError	errno = ECHILD（No child processes） 值通常为 10 ）
+
+# def exist_other_procs():
+#     for entry in os.listdir('/proc'):
+#         if entry.isdigit() and int(entry) != os.getpid():
+#             return True
+#     return False
+
+
 
 
 ps1 = ">"
@@ -1023,7 +1051,7 @@ def safe_copy_script(copy_target_path):
 
 
 
-def cleanup(si):
+def cleanup_outest(si):
     print(f"{scriptname} 正在执行清理...")
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
