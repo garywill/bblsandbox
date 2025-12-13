@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill/bblsandbox
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio
 from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
@@ -180,11 +180,11 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='empty-if-exist', dist='/etc/fstab'),
             d(plan='empty-if-exist', dist='/etc/systemd'),
             d(plan='empty-if-exist', dist='/etc/init.d'),
-            d(plan='empty-if-exist', dist=resolve('/etc/os-release')) if uc.mask_osrelease else None,
+            d(plan='empty-if-exist', dist=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
             d(plan='rofile', dist='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
 
             *([
-            d(plan='robind', dist=padir(resolve('/etc/resolv.conf')), SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
+            d(plan='robind', dist=padir(rslvn('/etc/resolv.conf')), SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
             # nscd ...
             ] if uc.net.dns == 'real' else [] ),
 
@@ -604,10 +604,10 @@ def run_in_forked(si, thislyr_cfg):
         os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
         os.chmod('/', 0o555)
         mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
+        print(f'{thislyr_cfg.layer_name}: 本层文件系统就绪 {os.listdir('/')}')
     del thislyr_cfg.newrootfs_path
     del thislyr_cfg.sbxdir_path0
 
-    print(f'{thislyr_cfg.layer_name}: 本层文件系统就绪 {os.listdir('/')}')
 
     if thislyr_cfg.sbxdir_path1:
         os.chdir(thislyr_cfg.sbxdir_path1)
@@ -707,7 +707,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         if plan in ['same', 'rosame', 'bind', 'robind'] :
             CHK( os.path.lexists(src) , f"来源{src}不存在")
             if plan in ['bind', 'robind'] :
-                src = resolve(src, strict=True)
+                src = rslvy(src)
             ro = True if plan in ['rosame', 'robind'] else False
             if Path(src).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 symlink(Path(src).readlink(), real_dist)
@@ -774,7 +774,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             mount('devpts', real_dist, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
         elif plan == 'appimg-mount':
             mkdirp(real_dist)
-            src = resolve(src, strict=True)
+            src = rslvy(src)
             offset = get_appimg_sqoffset(src)
             run_cmd_fg(['squashfuse', '-o', f'ro,offset={offset}', src, real_dist])
         elif plan == 'remountro':
@@ -988,9 +988,9 @@ MS = SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT
 def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
     source = napath(source) if source and source.startswith('/') else None
     target = napath(target)
-    if source and source.startswith('/') and resolve(source, strict=True) != source:
+    if source and source.startswith('/') and rslvy(source) != source:
         raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
-    if resolve(target, strict=True) != target:
+    if rslvy(target) != target:
         raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
     ret = libc.mount(
         source.encode() if source else None,
@@ -1083,7 +1083,7 @@ def drop_caps():
     BND_MAX = 40 # NOTE 是否因发行版而异？ TODO 不要硬编码
 
     show_clear_result = False
-    print('清除前', get_caps_dict())
+    print('降权前', get_caps_dict())
     capset_clear(eff=False , prm=True, inh=True,  doprint=show_clear_result)
     print('清除中', get_caps_dict()) if show_clear_result else None
     amb_clear(doprint=show_clear_result)
@@ -1093,7 +1093,7 @@ def drop_caps():
     bnd_clear(BND_MAX,  doprint=show_clear_result)
     print('清除中', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=True, prm=True, inh=True,  doprint=show_clear_result)
-    print('清除后', get_caps_dict())
+    print('降权后', get_caps_dict())
 
     # ------验证------------
 
@@ -1151,12 +1151,15 @@ def which_and_resolve_exist(cmd):
     if not path:
         return None
     try:
-        return resolve(path, strict=True)
+        return rslvy(path)
     except FileNotFoundError:
         return None
 
-def resolve(path, strict=False):
-    return str(Path(path).resolve(strict=strict))
+def rslvn(path):
+    return str(Path(napath(path)).resolve(strict=False))
+
+def rslvy(path):
+    return str(Path(napath(path)).resolve(strict=True))
 
 def padir(path):
     if napath(path) == '/':
