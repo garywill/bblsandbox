@@ -792,11 +792,12 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                 a( d( plan='rosame', dist=p, src=p ) )
             # 需要 tmpfs 的可写路径（容器内部用）
             paths_to_tmpfs = [ '/run', '/tmp', '/root', '/mnt',
-                '/var', '/var/lib', '/var/cache', f'/run/user/{si.uid}', '/run/user/0',
+                '/var', '/var/lib', '/var/cache', f'/run/user/{si.uid}', '/run/user/0', '/run/lock',
                 '/run/tmux' , f'{si.HOME}' , f'{si.HOME}/.cache' ]
             for p in paths_to_tmpfs:
                 a( d( plan='tmpfs', dist=p ) )
             a( d( plan='symlink', dist='/var/run', linkto='/run' ) )
+            a( d( plan='symlink', dist='/var/lock', linkto='/run/lock' ) )
         elif batch_plan == 'mask-privacy':
             distbase = pItem.distbase
             CHK( distbase in ['/', '/zrootfs'], "mask-privacy要求distbase必须为'/'或'/zrootfs'")
