@@ -66,7 +66,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
         sublayers = [
             d( # 第2层。 只适合跑 信任的 和要以信任身份显示在X11的： xpra client , dbus proxy . squashfs挂载
                 layer_name='layer2', # 默认模板的 layer_name 不要修改
-                unshare_pid=True, unshare_mnt=True,
+                unshare_mnt=True,
                 unshare_chdir=True, # chdir()不影响其他
                 newrootfs=True, # 第2层必须 # 有newrootfs则必须有fs
                 fs=[ # fs全称fs_plans_for_new_rootfs 。
@@ -88,7 +88,6 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                 sublayers = [
                     d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
                         layer_name='layer2a',
-                        unshare_pid=True, unshare_mnt=True,
                         unshare_chdir=True, # chdir()不影响其他
 
                         # uid 变回 1000
@@ -109,7 +108,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
 
 def gen_layer2h(si, uc, dyncfg):
     layer2h = d( # layer2h 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
-        layer_name='layer2h', unshare_pid=True, unshare_mnt=True, unshare_chdir=True,
+        layer_name='layer2h',  unshare_mnt=True, unshare_chdir=True,
         start_after=[
             d(waittype='socket-listened', path='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
         ],
@@ -127,7 +126,7 @@ def gen_layer2h(si, uc, dyncfg):
 def gen_layer3(si, uc, dyncfg):
     layer3 = d(
         layer_name='layer3', # 默认模板的 layer_name 不要修改
-        unshare_pid=True, unshare_mnt=True,
+        unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
         unshare_fd=True,
         unshare_cg=True,
@@ -200,9 +199,17 @@ def gen_layer3(si, uc, dyncfg):
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus_session_socket') if uc.dbus_session else None,
             d(DISPLAY=':10') if uc.gui=='xephyr' else None,
         ],
-        sublayers=[ #开始第4层，这里不可以只搞pid ns不搞其他 (主要是不搞 newrootfs ) ，因为想让4层与3层的一些应用通信。主要是在4层跑主app以实现以主app的退出与否决定整个沙箱退出
+        sublayers=[
             d(
-                layer_name='layer4',
+                layer_name='layer4a', # 默认模板的 layer_name 不要修改
+                unshare_pid=True, unshare_mnt=True,
+                unshare_chdir=True, # chdir()不影响其他
+
+                # uid 变回 1000
+                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
+            ),
+            d( # 主 用户app 在这里跑
+                layer_name='layer4', # 默认模板的 layer_name 不要修改
                 unshare_pid=True, unshare_mnt=True,
                 unshare_chdir=True, # chdir()不影响其他
 
@@ -330,10 +337,17 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     if cfg.layer_name == 'layer3': # 对第3层检查
         if cfg.fs and any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs) :
             raise_exit(f"层{cfg.layer_name}不应该在fs中使用 batch_plan='dup-rootfs'，因为上一层是最后一层允许看到主机文件的层")
-        if not (cfg.unshare_pid and cfg.unshare_mnt and cfg.unshare_chdir and cfg.unshare_fd and cfg.unshare_cg and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
-            raise_exit(f"层{cfg.layer_name}未把 [unshare_pid, unshare_mnt, unshare_chdir, unshare_fd, unshare_cg, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
+        if not (cfg.unshare_mnt and cfg.unshare_chdir and cfg.unshare_fd and cfg.unshare_cg and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
+            raise_exit(f"层{cfg.layer_name}未把 [unshare_mnt, unshare_chdir, unshare_fd, unshare_cg, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
         if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
             raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
+
+    if cfg.layer_name == 'layer2a':
+        CHK( cfg.drop_caps, f"{cfg.layer_name}未启用drop_caps=True（要求启用）")
+
+    if cfg.layer_name in ['layer4a', 'layer4']:
+        CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
+        CHK( cfg.drop_caps, f"{cfg.layer_name}未启用drop_caps=True（要求启用）")
 
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg)
@@ -541,12 +555,18 @@ def main():
     print(f"{thislyr_cfg.layer_name}: 即将fork")
     pid = os.fork()
     if pid == 0: # 子进程
-        run_in_forked(si, thislyr_cfg)
+        # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
+        if is_outest:
+            set_pdeathsig()
+
+        main2(si, thislyr_cfg)
         # print(f"{thislyr_cfg.layer_name}: fork后的子进程即将退出")
         sys.exit()
     else: # 父进程
-        if is_outest:
-            atexit.register(lambda: cleanup(si) ) # 顶层父进程注册清理函数
+        if not is_outest:
+            sys.exit()
+
+        atexit.register(lambda: cleanup(si) ) # 顶层父进程注册清理函数
 
         set_ps1(si, thislyr_cfg, 'PaAfterFork')
 
@@ -559,7 +579,7 @@ def main():
             print(f"{thislyr_cfg.layer_name}: fork后的子进程被信号 {signal_num} 终止")
 
 
-def run_in_forked(si, thislyr_cfg):
+def main2(si, thislyr_cfg):
     # 一般来说配合 unshare_user
     if thislyr_cfg.setgroups_deny:
         # print(f"{thislyr_cfg.layer_name}: setgroups = deny")
@@ -625,6 +645,24 @@ def run_in_forked(si, thislyr_cfg):
 
     set_ps1(si, thislyr_cfg, 'afterDropCaps')
 
+    # 如果unshare_pid,则我是init进程(pid=1)
+    #   处理各种SIGNAL
+    if thislyr_cfg.unshare_pid:
+        CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+        for sig in EXIT_SIGNALS:
+            signal.signal(sig, handle_exit_signals)
+
+        def sigchld_handler(signum, frame): #回收僵尸进程
+            while True:
+                try:
+                    # -1 表示等待任意子进程 # os.WNOHANG 表示非阻塞：如果没有可回收的子进程，立即返回 (0, 0)
+                    pid, status = os.waitpid(-1, os.WNOHANG)
+                    if pid == 0:
+                        break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
+                except ChildProcessError:
+                    break
+        signal.signal(signal.SIGCHLD, sigchld_handler)
+
     if thislyr_cfg.user_shell:
         prc = subprocess.run(['/bin/bash', '--norc' ],
                         stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr
@@ -636,7 +674,7 @@ def run_in_forked(si, thislyr_cfg):
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
 
-    child_procs = []
+    direct_child_procs = [] # 记录下直接创建的子进程，但可能用不上
 
     for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
         prc = subprocess.Popen(cmdItem.cmdlist ,
@@ -644,7 +682,7 @@ def run_in_forked(si, thislyr_cfg):
             stdout=sys.stdout if cmdItem.stdout else subprocess.DEVNULL,
             stderr=sys.stderr if cmdItem.stderr else subprocess.DEVNULL,
         )
-        child_procs.append(prc)
+        direct_child_procs.append(prc)
 
     sublayers = thislyr_cfg.sublayers or []
     print(f"{thislyr_cfg.layer_name}: 本层将生成 {len(sublayers)} 个子层")
@@ -660,10 +698,37 @@ def run_in_forked(si, thislyr_cfg):
             stdin=sys.stdin,
             stdout=sys.stdout, stderr=sys.stderr
         )
-        child_procs.append(prc)
+        direct_child_procs.append(prc)
 
-    for proc in child_procs:
-        proc.wait()  # 阻塞直到该子进程结束
+    # 如果unshare_pid,则我是init进程(pid=1)
+    #   如果有子进程，则等待，否则就退出
+    if thislyr_cfg.unshare_pid:
+        CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+        def exist_other_procs():
+            for entry in os.listdir('/proc'):
+                if entry.isdigit() and int(entry) != os.getpid():
+                    return True
+            return False
+        async def wait_for_all_children():
+            while True:
+                await asyncio.sleep(0.3)
+                if not exist_other_procs():
+                    await asyncio.sleep(0.1)
+                    if not exist_other_procs():
+                        await asyncio.sleep(0.1)
+                        if not exist_other_procs():
+                            sys.exit()
+        asyncio.run(wait_for_all_children())
+
+EXIT_SIGNALS = [ signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGILL, signal.SIGTRAP, signal.SIGABRT, signal.SIGBUS, signal.SIGFPE, signal.SIGUSR1, signal.SIGSEGV, signal.SIGUSR2, signal.SIGPIPE, signal.SIGALRM, signal.SIGTERM, signal.SIGXCPU, signal.SIGXFSZ, signal.SIGVTALRM, signal.SIGPROF, signal.SIGIO, signal.SIGSYS, ]
+def handle_exit_signals(*args):
+    signal_num = args[0] if len(args)>0 else None
+    if signal_num:
+        print(f"收到要退出的信号 {signal.Signals(signal_num).name} (={signal_num})")
+    if os.getpid() == 1:
+        os.kill(-1, signal.SIGTERM)
+        time.sleep(0.2)
+    sys.exit()
 
 
 ps1 = ">"
@@ -1127,6 +1192,9 @@ def get_caps_dict():
         cap_fields[cap_field] = match.group(1)
     return cap_fields
 
+def set_pdeathsig(): # 由layer1的fork出来的子进程调用
+    PR_SET_PDEATHSIG = 1
+    libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
 
 #============================
 
