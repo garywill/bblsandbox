@@ -8,6 +8,40 @@ A Linux sandbox tool that allows unlimited nesting. (**BBL**, short for Box-in-b
 
 ## Overview
 
+An example, the sandbox container tree might look like this:
+
+```
+Linux Host {
+    X11 (Real Desktop)
+    dbus-daemon --session (A) (Real user dbus service)
+    fcitx5-daemon (Real Input Method)
+
+    BBL Sandbox {
+        Sub-container : Companion Processes : Semi-trusted {
+            Xephyr (Isolated X11 Server + Client)
+            Xpra client (Seamless Isolated X11 Client)
+            dbus-proxy (B) (Filters and forwards dbus, relaying between A and C)
+        }
+        Sub-container : Untrusted zone {
+            Sub-container: User App {
+                User apps run here
+            }
+            Sub-container : Companion Processes {
+                Xpra X server (Isolated X11 Server)
+                dbus-proxy (C) (Splits and forwards user dbus to internal (D) and external (B))
+                dbus-daemon --session (D) (Internal user dbus service)
+                dbus-daemon --system (Internal system-level dbus)
+                keyring (Internal Keyring Service)
+                icewm (Lightweight Window Manager, usually paired with Xephyr)
+                kde-plasma (Internally isolated full desktop, usually requires Xephyr)
+                fcitx5-daemon (Independent input method for the internal desktop)
+            }
+        }
+    }
+}
+(Usually not all above will run. It depends on user options)
+```
+
 - You can run "untrusted" and "semi-trusted" apps in different layers of one sandbox. Every layer's isolation degree is configurable.
 
 - Arbitrary nesting. Unlike other tools, this tool focus on a smooth sub-namespace nesting experience. You can create a tree of layer-on-layer containers as you like
@@ -44,14 +78,14 @@ Early-stage. It works and you can read the code, but it has not been developed o
     - [x] UID=0 in layer1, back to uid=1000 in last layer; drop caps; no_new_privs
 - [x] AppImage mount support
 - GUI:
-    - [x] Optionally expose the host X11 connection
+    - [x] Optionally expose the host X11 connection to sandbox
     - [x] Optionally use Xephyr for an isolated X11 display
     - [ ] Xpra-based seamless X11 proxy 
-    - [ ] Wayland exposure 
+    - [ ] Optionally Wayland exposure to sandbox
     - [ ] Full isolated desktop inside Xephyr/Xvfb/x11vnc 
 - [ ] Optional access to real hardware or just GPU  
 - DBus:
-    - [x] Optionally expose the real DBus session socket
+    - [x] Optionally expose the real DBus session socket to sandbox
     - [ ] DBus filtering 
 - [ ] Per-layer shells exposed to the host 
 - [ ] Seccomp 

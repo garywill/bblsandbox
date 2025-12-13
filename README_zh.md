@@ -2,7 +2,41 @@
 
 可无限嵌套的Linux沙箱。Box-in-box Linux Sandbox 下文简称 **BBL**。
 
-## 基本特性
+## 总览
+
+一个例子，沙箱容器树可能是像这样的：
+
+```
+Linux Host {
+    X11 (真实桌面)
+    dbus-daemon --session (A) (真实dbus用户服务)
+    fcitx5-daemon (真实输入法)
+    
+    BBL沙箱 {
+        子容器:辅助进程:半信任 {
+            Xephyr (隔离X11服务端+客户端)
+            Xpra client (无缝隔离X11客户端)
+            dbus-proxy (B) (dbus通信过滤和转发在A与C之间转发)
+        }
+        子容器:不信任空间 {
+            子容器:用户App {
+                用户要运行的App
+            }
+            子容器:辅助进程 {
+                Xpra X server (隔离的X11服务端)
+                dbus-proxy (C) (分流转发用户dbus通信到内部(D)和外部(B))
+                dbus-daemon --session (D) (内部的用户dbus服务)
+                dbus-daemon --system (内部的系统级dbus)
+                keyring (内部的Keyring服务)
+                icewm (轻量级WM,一般配合Xephyr)
+                kde-plasma (内部隔离的完整桌面，一般需要Xephyr)
+                fcitx5-daemon (内部桌面独立的输入法)
+            }
+        }
+    }
+}
+（真正运行时，不会以上全部都启动，会根据选项决定启动哪些）
+```
 
 - “不信任app”与“半信任app”可在一个沙箱的不同层运行，可控制每层隔离程度
 
@@ -10,7 +44,7 @@
 
 - 单文件脚本，随处复制，依使用需求修改头部选项。免安装，精简依赖
 
-- 虽然是Python脚本，但直接通过libc调用内核功能，不需第三方Python库
+- 虽然是Python脚本，但直接通过libc调用Linux内核功能，不需第三方Python库
 
 - 不需root；不需守护进程；不需任何主机的Cap或suid
 
@@ -40,14 +74,14 @@
     - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPrivs
 - [x] 可挂载AppImage
 - 沙箱内使用GUI
-    - [x] 可选暴露真实X11接口
+    - [x] 可选暴露真实X11接口给沙箱
     - [x] 可选使用Xephyr隔离X11
     - [ ] 可选使用Xpra隔离的无缝X11代理
-    - [ ] 可选暴露wayland接口
+    - [ ] 可选暴露wayland接口给沙箱
     - [ ] 可选Xephyr/Xvfb/x11vnc窗口内运行的隔离的完整桌面环境
 - [ ] 可选暴露真实物理硬件，或仅显卡渲染所需部分
 - DBus
-    - [x] 可选暴露真实dbus session接口
+    - [x] 可选暴露真实dbus session接口给沙箱
     - [ ] 可选过滤dbus通信
 - [ ] 每层子容器shell接口暴露给主机
 - [ ] 可选的seccomp
